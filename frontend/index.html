@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="F1 Manager 2026 - Build your dream Formula 1 team and compete for the World Championship">
+    <meta name="theme-color" content="#e10600">
+    <title>F1 Manager 2026</title>
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="stylesheet" href="/css/components.css">
+    <style>
+        /* Critical CSS for initial load */
+        .app-loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background-color: var(--bg-primary);
+        }
+        .app-loading .spinner {
+            width: 40px;
+            height: 40px;
+            border-width: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Navbar -->
+        <nav class="navbar">
+            <div class="navbar-content">
+                <a href="#/" class="navbar-brand">
+                    F1 <span>Manager</span>
+                </a>
+                <ul class="navbar-nav" id="nav-auth">
+                    <!-- Auth links populated by JS -->
+                </ul>
+                <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                    </svg>
+                </button>
+            </div>
+        </nav>
+
+        <!-- Main content -->
+        <main class="main-content" id="app">
+            <div class="app-loading">
+                <div class="spinner spinner-lg"></div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>F1 Manager 2026</p>
+        </footer>
+    </div>
+
+    <script type="module" src="/js/app.js"></script>
+</body>
+</html>

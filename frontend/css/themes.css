@@ -1,0 +1,93 @@
+/* Theme CSS Variables */
+:root {
+    /* Light theme (default) */
+    --bg-primary: #ffffff;
+    --bg-secondary: #f5f5f5;
+    --bg-tertiary: #e8e8e8;
+    --bg-card: #ffffff;
+    --text-primary: #1a1a1a;
+    --text-secondary: #666666;
+    --text-muted: #999999;
+    --accent-primary: #e10600;  /* F1 Red */
+    --accent-secondary: #15151e; /* F1 Dark */
+    --accent-hover: #ff1801;
+    --border-color: #dddddd;
+    --input-bg: #ffffff;
+    --input-border: #cccccc;
+    --input-focus: #e10600;
+    --success: #22c55e;
+    --success-bg: #dcfce7;
+    --error: #ef4444;
+    --error-bg: #fef2f2;
+    --warning: #f59e0b;
+    --warning-bg: #fef3c7;
+    --shadow: rgba(0, 0, 0, 0.1);
+    --shadow-lg: rgba(0, 0, 0, 0.15);
+
+    /* Spacing */
+    --space-xs: 0.25rem;
+    --space-sm: 0.5rem;
+    --space-md: 1rem;
+    --space-lg: 1.5rem;
+    --space-xl: 2rem;
+    --space-2xl: 3rem;
+
+    /* Border radius */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+    --radius-full: 9999px;
+
+    /* Transitions */
+    --transition-fast: 150ms ease;
+    --transition-normal: 250ms ease;
+    --transition-slow: 350ms ease;
+
+    /* Font sizes */
+    --font-xs: 0.75rem;
+    --font-sm: 0.875rem;
+    --font-base: 1rem;
+    --font-lg: 1.125rem;
+    --font-xl: 1.25rem;
+    --font-2xl: 1.5rem;
+    --font-3xl: 2rem;
+    --font-4xl: 2.5rem;
+}
+
+/* Dark theme */
+[data-theme="dark"] {
+    --bg-primary: #0f0f13;
+    --bg-secondary: #1a1a22;
+    --bg-tertiary: #252530;
+    --bg-card: #1a1a22;
+    --text-primary: #ffffff;
+    --text-secondary: #a0a0a0;
+    --text-muted: #666666;
+    --accent-primary: #e10600;
+    --accent-secondary: #ffffff;
+    --accent-hover: #ff3333;
+    --border-color: #333340;
+    --input-bg: #252530;
+    --input-border: #404050;
+    --input-focus: #e10600;
+    --success: #22c55e;
+    --success-bg: #14532d;
+    --error: #ef4444;
+    --error-bg: #450a0a;
+    --warning: #f59e0b;
+    --warning-bg: #451a03;
+    --shadow: rgba(0, 0, 0, 0.3);
+    --shadow-lg: rgba(0, 0, 0, 0.4);
+}
+
+/* Smooth theme transitions */
+body,
+.card,
+.btn,
+input,
+.navbar {
+    transition: background-color var(--transition-normal),
+                color var(--transition-normal),
+                border-color var(--transition-normal);
+}

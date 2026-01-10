@@ -1,2 +1,18 @@
-# F1 Manager Game Dependencies
-# No external dependencies required - uses only Python standard library
+# F1 Manager 2026 Dependencies
+
+# Web Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+
+# Authentication & Security
+python-jose[cryptography]>=3.3.0
+argon2-cffi>=23.1.0
+pydantic[email]>=2.5.0
+pydantic-settings>=2.1.0
+
+# Database
+asyncpg>=0.29.0
+
+# Utilities
+python-dotenv>=1.0.0

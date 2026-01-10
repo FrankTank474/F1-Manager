@@ -27,6 +27,44 @@ Thumbs.db
 # Save files
 saves/
 *.save
+savegame.json
+
+# Local data storage (JSON datastore)
+data/*.json
+!data/.gitkeep
 
 # Logs
 *.log
+
+# Web / Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn
+package-lock.json
+yarn.lock
+
+# Build outputs
+.next/
+.nuxt/
+.output/
+.cache/
+public/build/
+dist/
+out/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Testing
+coverage/
+.nyc_output/
+
+# Misc
+*.min.js
+*.min.css
+.parcel-cache/

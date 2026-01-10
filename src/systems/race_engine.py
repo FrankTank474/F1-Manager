@@ -6,6 +6,8 @@ from enum import Enum
 from typing import List, Dict, Tuple, Optional
 from ..models import Driver, Team, Track, Car
 from ..ui.colors import get_team_color, Colors
+from .incidents import IncidentSystem, RaceIncident
+from .rivalry import RivalryManager
 
 
 class TireCompound(Enum):
@@ -130,7 +132,7 @@ class RaceState:
 
 
 class RaceEngine:
-    def __init__(self, track: Track, teams: List[Team], player_team: Team):
+    def __init__(self, track: Track, teams: List[Team], player_team: Team, rivalry_manager: Optional[RivalryManager] = None):
         self.track = track
         self.teams = teams
         self.player_team = player_team
@@ -138,6 +140,10 @@ class RaceEngine:
         self.qualifying_results: List[RaceEntry] = []
         self.race_log: List[str] = []
         self.weekend_modifiers: Dict[str, Dict] = {}  # driver_name -> modifiers
+        self.incident_system = IncidentSystem()
+        self.rivalry_manager = rivalry_manager or RivalryManager()
+        self.race_incidents: List[RaceIncident] = []  # Track all incidents this race
+        self.qualifying_positions: Dict[str, int] = {}  # Track quali positions for headlines
         self._generate_weekend_modifiers()
 
     def _generate_weekend_modifiers(self) -> None:
@@ -356,6 +362,9 @@ class RaceEngine:
                     self.race_log.append(f"QUALIFYING: {entry.driver.name} is having a standout weekend!")
 
         self.qualifying_results = entries
+        # Store qualifying positions for headline generation
+        for entry in entries:
+            self.qualifying_positions[entry.driver.name] = entry.position
         return entries
 
     def display_qualifying_results(self) -> str:
@@ -439,6 +448,8 @@ class RaceEngine:
             weather=Weather.DRY
         )
         self.race_log = []
+        self.race_incidents = []
+        self.incident_system.reset()
 
     def _simulate_race_start(self) -> None:
         """Simulate race start with position changes and potential incidents."""
@@ -503,10 +514,13 @@ class RaceEngine:
                         self.race_log.append(f"LAP 1: {entry.driver.name} poor start! P{old_pos} -> P{pos}")
                 pos += 1
 
-    def _attempt_overtake(self, attacker: RaceEntry, defender: RaceEntry) -> bool:
-        """Attempt an overtake. Returns True if successful."""
+    def _attempt_overtake(self, attacker: RaceEntry, defender: RaceEntry) -> Tuple[bool, bool]:
+        """
+        Attempt an overtake.
+        Returns (successful, was_aggressive) - aggressive moves may create rivalries.
+        """
         if attacker.dnf or defender.dnf:
-            return False
+            return False, False
 
         # Calculate overtake probability
         pace_diff = attacker.driver.stats.pace - defender.driver.stats.pace
@@ -529,11 +543,21 @@ class RaceEngine:
         if defender.mechanical_issue:
             mech_penalty = 5  # Easier to pass cars with issues
 
+        # Rivalry modifier - rivals are more aggressive
+        rivalry_mod = self.rivalry_manager.get_battle_intensity_modifier(
+            attacker.driver.name, defender.driver.name
+        )
+
         probability = (20 + pace_diff * 0.3 + (overtake_skill - defend_skill) * 0.2 +
                       car_diff * 0.1 + tire_diff * 20 + track_factor + drs_bonus +
-                      form_diff * 0.5 + mech_penalty)
+                      form_diff * 0.5 + mech_penalty) * rivalry_mod
 
-        return random.random() * 100 < probability
+        success = random.random() * 100 < probability
+
+        # Determine if it was an aggressive move (close battle, high probability required)
+        was_aggressive = success and probability < 40 and random.random() < 0.3
+
+        return success, was_aggressive
 
     def _simulate_lap(self) -> List[str]:
         """Simulate a single lap and return events."""
@@ -559,17 +583,49 @@ class RaceEngine:
                     events.append(f"LAP {state.current_lap}: Weather change - Rain easing!")
                 # 30% chance heavy rain continues
 
-        # Safety car chance
-        if not state.safety_car and random.random() < 0.01:  # 1% chance
-            state.safety_car = True
-            state.safety_car_laps = random.randint(2, 4)
-            events.append(f"LAP {state.current_lap}: SAFETY CAR DEPLOYED!")
+        # Check for incidents using the incident system
+        incident = self.incident_system.check_for_incident(
+            state.entries,
+            state.current_lap,
+            state.total_laps,
+            state.weather.value,
+            self.track.overtaking_difficulty
+        )
 
-        if state.safety_car:
-            state.safety_car_laps -= 1
-            if state.safety_car_laps <= 0:
+        if incident:
+            self.race_incidents.append(incident)
+            events.append(f"LAP {state.current_lap}: {incident.description}")
+
+            if incident.causes_red_flag:
+                events.append(f"LAP {state.current_lap}: RED FLAG! Race suspended!")
+            elif incident.causes_safety_car:
+                state.safety_car = True
+                events.append(f"LAP {state.current_lap}: SAFETY CAR DEPLOYED!")
+
+            # Record collision in rivalry system
+            if incident.secondary_driver:
+                self.rivalry_manager.record_collision(
+                    incident.primary_driver,
+                    incident.secondary_driver,
+                    self.track.name,
+                    state.current_lap,
+                    aggressor=incident.primary_driver
+                )
+
+        # Update safety car status
+        if self.incident_system.safety_car_active:
+            state.safety_car = True
+            still_active, sc_message = self.incident_system.update_safety_car()
+            if sc_message:
+                events.append(f"LAP {state.current_lap}: {sc_message}")
+            if not still_active:
                 state.safety_car = False
-                events.append(f"LAP {state.current_lap}: Safety car in, racing resumes!")
+
+        # Update red flag status
+        if self.incident_system.red_flag_active:
+            still_active, rf_message = self.incident_system.update_red_flag(state.current_lap)
+            if rf_message:
+                events.append(f"LAP {state.current_lap}: {rf_message}")
 
         # Calculate lap times and update positions
         for entry in state.entries:
@@ -628,8 +684,8 @@ class RaceEngine:
                 if entry.team == self.player_team:
                     events.append(f"RADIO: {entry.driver.name}'s tires entering CRITICAL wear zone!")
 
-        # Attempt overtakes (not under safety car)
-        if not state.safety_car:
+        # Attempt overtakes (not under safety car or red flag)
+        if not state.safety_car and not self.incident_system.red_flag_active:
             active = [e for e in state.entries if not e.dnf]
             active.sort(key=lambda e: e.total_time)
 
@@ -639,10 +695,26 @@ class RaceEngine:
 
                 # Only attempt if within 1.5 seconds
                 gap = attacker.total_time - defender.total_time
-                if gap < 1.5 and self._attempt_overtake(attacker, defender):
-                    events.append(
-                        f"LAP {state.current_lap}: {attacker.driver.name} overtakes {defender.driver.name}!"
-                    )
+                if gap < 1.5:
+                    success, was_aggressive = self._attempt_overtake(attacker, defender)
+                    if success:
+                        if was_aggressive:
+                            events.append(
+                                f"LAP {state.current_lap}: {attacker.driver.name} makes an AGGRESSIVE move on {defender.driver.name}!"
+                            )
+                            # Record in rivalry system
+                            msg = self.rivalry_manager.record_aggressive_move(
+                                attacker.driver.name,
+                                defender.driver.name,
+                                self.track.name,
+                                state.current_lap
+                            )
+                            if msg:
+                                events.append(f"  {msg}")
+                        else:
+                            events.append(
+                                f"LAP {state.current_lap}: {attacker.driver.name} overtakes {defender.driver.name}!"
+                            )
 
         # Update positions based on total time
         active = [e for e in state.entries if not e.dnf]

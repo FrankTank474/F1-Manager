@@ -109,11 +109,12 @@ class MenuSystem:
     ║    [4] Upgrade Car                                                ║
     ║    [5] View Rival Teams                                           ║
     ║    [6] Sponsors                                                   ║
+    ║    [7] Driver Rivalries                                           ║
     ║    [B] Back to Main Menu                                          ║
     ║                                                                   ║
     ╚═══════════════════════════════════════════════════════════════════╝
         """)
-        return get_input("  Enter choice: ", ['1', '2', '3', '4', '5', '6', 'b', 'B'])
+        return get_input("  Enter choice: ", ['1', '2', '3', '4', '5', '6', '7', 'b', 'B'])
 
     @staticmethod
     def display_new_game_menu() -> str:

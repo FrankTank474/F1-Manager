@@ -9,6 +9,7 @@ from pathlib import Path
 from .models import Driver, DriverStats, Car, Team, Track, TrackType
 from .data import F1_DRIVERS, F2_DRIVERS, AI_TEAMS, TRACKS
 from .systems import RaceEngine, DriverMarket, UpgradeSystem, StandingsManager, SponsorManager
+from .systems import RivalryManager, NewsGenerator
 from .systems.race_engine import TireCompound, Weather
 from .ui import MenuSystem, clear_screen, press_enter_to_continue, get_int_input
 
@@ -25,6 +26,8 @@ class GameState:
         self.driver_market: Optional[DriverMarket] = None
         self.upgrade_system: Optional[UpgradeSystem] = None
         self.sponsor_manager: SponsorManager = SponsorManager()
+        self.rivalry_manager: RivalryManager = RivalryManager()
+        self.news_generator: NewsGenerator = NewsGenerator()
 
     def initialize_new_game(self, team_name: str) -> None:
         """Initialize a new game with player team."""
@@ -177,6 +180,9 @@ class GameState:
         # Reset ALL driver stats (including free agents not on teams)
         for driver in self.all_drivers:
             driver.reset_season_stats()
+
+        # Clear season headlines
+        self.news_generator.clear_season()
 
         # Ensure all AI teams have 2 drivers
         if self.driver_market:
@@ -585,7 +591,7 @@ class Game:
             print(f"\n  Race {i+1}/{races_to_simulate}: {track.name}...")
 
             # Create race engine and run qualifying
-            race_engine = RaceEngine(track, self.state.teams, self.state.player_team)
+            race_engine = RaceEngine(track, self.state.teams, self.state.player_team, self.state.rivalry_manager)
             race_engine.run_qualifying()
 
             # Run quick race (fully automated)
@@ -618,6 +624,12 @@ class Game:
             # Process rising stars (silent in fast-forward)
             self.state.process_rising_stars(results)
 
+            # Advance rivalry manager
+            self.state.rivalry_manager.advance_race()
+
+            # Track incidents for summary
+            incident_count = len(race_engine.race_incidents) if hasattr(race_engine, 'race_incidents') else 0
+
             # Get player results for summary
             player_results = []
             for driver, team, position in results:
@@ -632,7 +644,8 @@ class Game:
                 'results': player_results,
                 'prize': total_prize,
                 'sponsor_met': sponsor_met,
-                'sponsor_pay': sponsor_payment
+                'sponsor_pay': sponsor_payment,
+                'incidents': incident_count
             })
 
             print(f"    Done! ", end="")
@@ -707,8 +720,8 @@ class Game:
             len(self.state.tracks)
         )
 
-        # Create race engine
-        race_engine = RaceEngine(track, self.state.teams, self.state.player_team)
+        # Create race engine with rivalry manager
+        race_engine = RaceEngine(track, self.state.teams, self.state.player_team, self.state.rivalry_manager)
 
         # Qualifying
         clear_screen()
@@ -835,6 +848,56 @@ class Game:
             for msg in rising_star_messages:
                 print(f"  {msg}")
             print("-" * 50)
+
+        # Show incident summary if there were incidents
+        if race_engine.race_incidents:
+            print("\n" + "-" * 50)
+            print("  RACE INCIDENTS")
+            print("-" * 50)
+            for incident in race_engine.race_incidents[:5]:  # Show max 5
+                flag_info = ""
+                if incident.causes_red_flag:
+                    flag_info = " [RED FLAG]"
+                elif incident.causes_safety_car:
+                    flag_info = " [SC]"
+                print(f"  Lap {incident.lap}: {incident.description}{flag_info}")
+            print("-" * 50)
+
+        # Generate and display headlines
+        # Get championship info for headlines
+        driver_standings = self.state.standings_manager.get_driver_standings()
+        champ_leader = driver_standings[0][1].name if driver_standings else ""
+        champ_gap = 0
+        if len(driver_standings) >= 2:
+            champ_gap = driver_standings[0][1].season_points - driver_standings[1][1].season_points
+
+        # Get active rivalries
+        active_rivalries = self.state.rivalry_manager.get_race_drama_potential(
+            [d.name for d, t, p in results if p > 0]
+        )
+
+        headlines = self.state.news_generator.generate_race_headlines(
+            race_results=results,
+            track_name=track.name,
+            qualifying_positions=race_engine.qualifying_positions,
+            incidents=[str(i.description) for i in race_engine.race_incidents],
+            rivalries=active_rivalries,
+            championship_leader=champ_leader,
+            championship_gap=champ_gap,
+            player_team_name=self.state.player_team.name
+        )
+
+        if headlines:
+            print(self.state.news_generator.display_headlines(headlines, "POST-RACE NEWS"))
+            press_enter_to_continue()
+
+        # Show rivalries if any are notable
+        active = self.state.rivalry_manager.get_active_rivalries(40)
+        if active:
+            print(self.state.rivalry_manager.display_rivalries())
+
+        # Advance rivalry manager
+        self.state.rivalry_manager.advance_race()
 
         # Show updated standings
         print(self.state.standings_manager.display_driver_standings())
@@ -1060,6 +1123,8 @@ class Game:
                 self._view_rival_teams()
             elif choice == '6':
                 self._manage_sponsors()
+            elif choice == '7':
+                self._view_rivalries()
 
     def _view_my_drivers(self) -> None:
         """View player's current drivers."""
@@ -1241,6 +1306,50 @@ class Game:
             print("  No drivers signed")
         print("\n" + "=" * 60)
         press_enter_to_continue()
+
+    def _view_rivalries(self) -> None:
+        """View current driver rivalries."""
+        clear_screen()
+        active = self.state.rivalry_manager.get_active_rivalries(20)
+
+        if active:
+            print(self.state.rivalry_manager.display_rivalries())
+
+            # Show detailed rivalry info if requested
+            print("\n  Enter rivalry number for details, or B to go back:")
+            active.sort(key=lambda r: r.intensity, reverse=True)
+            for i, rivalry in enumerate(active, 1):
+                print(f"  [{i}] {rivalry.driver1} vs {rivalry.driver2}")
+
+            choice = input("\n  Choice: ").strip().lower()
+            if choice != 'b':
+                try:
+                    num = int(choice)
+                    if 0 < num <= len(active):
+                        rivalry = active[num - 1]
+                        clear_screen()
+                        print("\n" + "=" * 60)
+                        print(f"  RIVALRY: {rivalry.driver1} vs {rivalry.driver2}")
+                        print("=" * 60)
+                        print(f"  Intensity: {rivalry.intensity}/100 [{rivalry.level}]")
+                        print(f"  Total Incidents: {len(rivalry.interactions)}")
+                        print("\n  INCIDENT HISTORY:")
+                        print("-" * 60)
+                        for interaction in rivalry.interactions[-5:]:  # Last 5
+                            print(f"  {interaction.race} Lap {interaction.lap}: {interaction.description}")
+                        print("=" * 60)
+                        press_enter_to_continue()
+                except ValueError:
+                    pass
+        else:
+            print("\n" + "=" * 60)
+            print("  DRIVER RIVALRIES")
+            print("=" * 60)
+            print("\n  No notable driver rivalries have developed yet.")
+            print("  Rivalries form when drivers collide, make aggressive moves,")
+            print("  or battle closely for position over multiple races.")
+            print("\n" + "=" * 60)
+            press_enter_to_continue()
 
     def _manage_sponsors(self) -> None:
         """Manage team sponsors."""

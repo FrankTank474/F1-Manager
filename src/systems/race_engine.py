@@ -132,10 +132,16 @@ class RaceState:
 
 
 class RaceEngine:
-    def __init__(self, track: Track, teams: List[Team], player_team: Team, rivalry_manager: Optional[RivalryManager] = None):
+    def __init__(self, track: Track, teams: List[Team], player_team = None, rivalry_manager: Optional[RivalryManager] = None, player_teams: List[Team] = None):
         self.track = track
         self.teams = teams
-        self.player_team = player_team
+        # Support both single player_team (backward compat) and list of player_teams
+        if player_teams is not None:
+            self.player_teams = player_teams
+        elif player_team is not None:
+            self.player_teams = [player_team]
+        else:
+            self.player_teams = []
         self.race_state: Optional[RaceState] = None
         self.qualifying_results: List[RaceEntry] = []
         self.race_log: List[str] = []
@@ -145,6 +151,15 @@ class RaceEngine:
         self.race_incidents: List[RaceIncident] = []  # Track all incidents this race
         self.qualifying_positions: Dict[str, int] = {}  # Track quali positions for headlines
         self._generate_weekend_modifiers()
+
+    @property
+    def player_team(self) -> Optional[Team]:
+        """Backward compatibility - returns first player team."""
+        return self.player_teams[0] if self.player_teams else None
+
+    def is_player_team(self, team: Team) -> bool:
+        """Check if team belongs to any player."""
+        return team in self.player_teams
 
     def _generate_weekend_modifiers(self) -> None:
         """Generate random weekend form modifiers for all drivers."""
@@ -736,7 +751,8 @@ class RaceEngine:
         drivers_needing_pit = []
 
         for entry in self.race_state.entries:
-            if entry.team == self.player_team and not entry.dnf:
+            # Check if belongs to ANY player team
+            if self.is_player_team(entry.team) and not entry.dnf:
                 # Skip if player chose to stay out until end
                 if entry.no_more_pit_prompts:
                     continue
@@ -749,8 +765,17 @@ class RaceEngine:
                     self.race_state.weather != Weather.DRY and
                     entry.tire.compound not in [TireCompound.INTERMEDIATE, TireCompound.WET]
                 ):
+                    # Determine which player owns this team
+                    player_number = 0
+                    for i, pt in enumerate(self.player_teams):
+                        if entry.team == pt:
+                            player_number = i + 1
+                            break
+
                     drivers_needing_pit.append({
                         "driver": entry.driver.name,
+                        "team": entry.team,
+                        "player_number": player_number,
                         "tire_wear": tire_wear,
                         "current_compound": entry.tire.compound.value,
                         "weather": self.race_state.weather.value,
@@ -785,7 +810,8 @@ class RaceEngine:
         state = self.race_state
 
         for entry in state.entries:
-            if entry.dnf or entry.team == self.player_team:
+            # Skip DNF'd drivers and ALL player teams
+            if entry.dnf or self.is_player_team(entry.team):
                 continue
 
             should_pit = False

@@ -11,6 +11,7 @@ class Team:
     car: Car
     drivers: List[Driver] = field(default_factory=list)
     is_player_team: bool = False
+    player_number: int = 0  # 0 = AI, 1 = Player 1, 2 = Player 2
     season_points: int = 0
     race_wins: int = 0
     total_finishes: int = 0  # Number of race finishes (for avg position calc)

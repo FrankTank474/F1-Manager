@@ -335,3 +335,246 @@ class MenuSystem:
     ╚═══════════════════════════════════════════════════════════════════╝
         """)
         return get_input("  Enter choice: ", ['1', '2', '3', '4', 'b', 'B'])
+
+    # ==========================================================================
+    # MULTIPLAYER MENU METHODS
+    # ==========================================================================
+
+    @staticmethod
+    def display_player_count_menu() -> int:
+        """Select number of players (1 or 2)."""
+        clear_screen()
+        print("""
+    ╔═══════════════════════════════════════════════════════════════════╗
+    ║                      GAME MODE SELECTION                          ║
+    ╠═══════════════════════════════════════════════════════════════════╣
+    ║                                                                   ║
+    ║    [1] Single Player                                              ║
+    ║        - Manage your team against AI opponents                    ║
+    ║                                                                   ║
+    ║    [2] Two Players (Hot-Seat)                                     ║
+    ║        - Compete with a friend on the same computer               ║
+    ║        - Take turns managing your teams                           ║
+    ║        - Compete for drivers and championships!                   ║
+    ║                                                                   ║
+    ╚═══════════════════════════════════════════════════════════════════╝
+        """)
+        choice = get_input("  Select game mode: ", ['1', '2'])
+        return int(choice)
+
+    @staticmethod
+    def display_new_game_menu_multiplayer(player_number: int) -> str:
+        """Display new game setup for a specific player."""
+        clear_screen()
+        print(f"""
+    ╔═══════════════════════════════════════════════════════════════════╗
+    ║                   PLAYER {player_number} - TEAM SETUP                         ║
+    ╠═══════════════════════════════════════════════════════════════════╣
+    ║                                                                   ║
+    ║  Welcome, Player {player_number}!                                             ║
+    ║                                                                   ║
+    ║  Create your own F1 team and compete against your rival           ║
+    ║  and the established teams on the grid.                           ║
+    ║                                                                   ║
+    ║  Starting Resources:                                              ║
+    ║  - Budget: $50M                                                   ║
+    ║  - Car Performance: Backmarker level                              ║
+    ║  - Drivers: You must sign 2 drivers from the market               ║
+    ║                                                                   ║
+    ╚═══════════════════════════════════════════════════════════════════╝
+        """)
+        return input(f"\n  Player {player_number}, enter your team name: ").strip()
+
+    @staticmethod
+    def display_player_switch_prompt(player_number: int, context: str = "YOUR TURN") -> None:
+        """Display prompt to switch to another player."""
+        clear_screen()
+        print(f"""
+    ╔═══════════════════════════════════════════════════════════════════╗
+    ║                                                                   ║
+    ║                                                                   ║
+    ║                     ╔═══════════════════════╗                     ║
+    ║                     ║    PLAYER {player_number}'s TURN    ║                     ║
+    ║                     ╚═══════════════════════╝                     ║
+    ║                                                                   ║
+    ║                        {context:^30}                       ║
+    ║                                                                   ║
+    ║             Please hand the device to Player {player_number}                  ║
+    ║                                                                   ║
+    ║                                                                   ║
+    ╚═══════════════════════════════════════════════════════════════════╝
+        """)
+        input(f"\n  Player {player_number}, press Enter when ready...")
+        clear_screen()
+
+    @staticmethod
+    def display_multiplayer_main_menu(
+        player_number: int,
+        team_name: str,
+        budget: float,
+        season: int,
+        race_num: int,
+        total_races: int,
+        is_turn_based: bool = True
+    ) -> str:
+        """Display main game menu for multiplayer with player indicator."""
+        clear_screen()
+        budget_str = f"${budget:.1f}M"
+        turn_indicator = f"PLAYER {player_number}" if is_turn_based else ""
+        print(f"""
+    ╔═══════════════════════════════════════════════════════════════════╗
+    ║          F1 MANAGER 2026 - {turn_indicator:^15}                    ║
+    ╠═══════════════════════════════════════════════════════════════════╣
+    ║  Team: {team_name:<25}  Season: {season:<3}                      ║
+    ║  Budget: {budget_str:<20}  Race: {race_num}/{total_races:<15}  ║
+    ╠═══════════════════════════════════════════════════════════════════╣
+    ║                                                                   ║
+    ║    [1] Continue to Next Race                                      ║
+    ║    [2] Fast Forward (Simulate Multiple Races)                     ║
+    ║    [3] View Driver Standings                                      ║
+    ║    [4] View Constructor Standings                                 ║
+    ║    [5] Team Management                                            ║
+    ║    [6] View Season Calendar                                       ║
+    ║    [7] Save Game                                                  ║
+    ║    [8] Quit Game                                                  ║
+    ║                                                                   ║
+    ╚═══════════════════════════════════════════════════════════════════╝
+        """)
+        return get_input("  Enter choice: ", ['1', '2', '3', '4', '5', '6', '7', '8'])
+
+    @staticmethod
+    def display_multiplayer_team_menu(player_number: int, team_name: str) -> str:
+        """Display team management menu for multiplayer with end turn option."""
+        clear_screen()
+        print(f"""
+    ╔═══════════════════════════════════════════════════════════════════╗
+    ║           TEAM MANAGEMENT - PLAYER {player_number} ({team_name[:15]:<15})       ║
+    ╠═══════════════════════════════════════════════════════════════════╣
+    ║                                                                   ║
+    ║    [1] View My Drivers (Stats, Morale, Contracts)                 ║
+    ║    [2] View My Car                                                ║
+    ║    [3] Driver Market                                              ║
+    ║    [4] Car Development                                            ║
+    ║    [5] View Rival Teams                                           ║
+    ║    [6] Sponsors                                                   ║
+    ║    [7] Driver Rivalries                                           ║
+    ║    [8] Inbox                                                      ║
+    ║    [E] End Turn (Switch to other player)                          ║
+    ║    [B] Back to Main Menu                                          ║
+    ║                                                                   ║
+    ╚═══════════════════════════════════════════════════════════════════╝
+        """)
+        return get_input("  Enter choice: ", ['1', '2', '3', '4', '5', '6', '7', '8', 'e', 'E', 'b', 'B'])
+
+    @staticmethod
+    def display_tire_selection_multiplayer(player_number: int, team_name: str, weather: str) -> str:
+        """Display tire selection for race start with player indicator."""
+        clear_screen()
+        print(f"""
+    ╔═══════════════════════════════════════════════════════════════════╗
+    ║         STARTING TIRE SELECTION - PLAYER {player_number}                      ║
+    ╠═══════════════════════════════════════════════════════════════════╣
+    ║  Team: {team_name:<25}                                    ║
+    ║  Weather: {weather:<20}                                          ║
+    ╠═══════════════════════════════════════════════════════════════════╣
+    ║                                                                   ║
+    ║    [1] Soft     - Fastest, high degradation                       ║
+    ║    [2] Medium   - Balanced pace and wear                          ║
+    ║    [3] Hard     - Slowest, lowest degradation                     ║
+    ║                                                                   ║
+    ╚═══════════════════════════════════════════════════════════════════╝
+        """)
+        return get_input("  Select starting tire: ", ['1', '2', '3'])
+
+    @staticmethod
+    def display_bidding_war_start(driver_name: str, base_price: float, teams: list) -> None:
+        """Display start of a bidding war."""
+        clear_screen()
+        team_names = ", ".join(teams)
+        print(f"""
+    ╔═══════════════════════════════════════════════════════════════════╗
+    ║                      BIDDING WAR!                                 ║
+    ╠═══════════════════════════════════════════════════════════════════╣
+    ║                                                                   ║
+    ║  Multiple teams want to sign {driver_name:<20}!             ║
+    ║                                                                   ║
+    ║  Interested Teams: {team_names:<35}     ║
+    ║  Starting Price: ${base_price:<10.1f}M                                  ║
+    ║                                                                   ║
+    ║  The highest bidder will sign the driver!                         ║
+    ║                                                                   ║
+    ╚═══════════════════════════════════════════════════════════════════╝
+        """)
+        press_enter_to_continue()
+
+    @staticmethod
+    def display_bidding_war_turn(
+        player_number: int,
+        team_name: str,
+        driver_name: str,
+        current_bid: float,
+        current_leader: str,
+        your_budget: float
+    ) -> str:
+        """Display bidding war turn for a player."""
+        clear_screen()
+        can_bid_1 = your_budget >= current_bid + 1
+        can_bid_5 = your_budget >= current_bid + 5
+        print(f"""
+    ╔═══════════════════════════════════════════════════════════════════╗
+    ║              BIDDING WAR - PLAYER {player_number} ({team_name[:15]:<15})        ║
+    ╠═══════════════════════════════════════════════════════════════════╣
+    ║  Driver: {driver_name:<30}                          ║
+    ║  Current Bid: ${current_bid:<10.1f}M  (by {current_leader[:15]:<15})        ║
+    ║  Your Budget: ${your_budget:<10.1f}M                                    ║
+    ╠═══════════════════════════════════════════════════════════════════╣
+    ║                                                                   ║""")
+        if can_bid_1:
+            print(f"""    ║    [1] Raise by $1M  (New bid: ${current_bid + 1:.1f}M)                      ║""")
+        if can_bid_5:
+            print(f"""    ║    [5] Raise by $5M  (New bid: ${current_bid + 5:.1f}M)                      ║""")
+        print(f"""    ║    [P] Pass (Drop out of bidding)                                 ║
+    ║                                                                   ║
+    ╚═══════════════════════════════════════════════════════════════════╝
+        """)
+        valid = ['p', 'P']
+        if can_bid_1:
+            valid.extend(['1'])
+        if can_bid_5:
+            valid.extend(['5'])
+        return get_input("  Your choice: ", valid)
+
+    @staticmethod
+    def display_bidding_war_result(winner_team: str, driver_name: str, final_price: float) -> None:
+        """Display the result of a bidding war."""
+        clear_screen()
+        print(f"""
+    ╔═══════════════════════════════════════════════════════════════════╗
+    ║                    BIDDING WAR RESULT                             ║
+    ╠═══════════════════════════════════════════════════════════════════╣
+    ║                                                                   ║
+    ║  {winner_team:<30} wins the bidding!                ║
+    ║                                                                   ║
+    ║  {driver_name:<25} signs for ${final_price:<10.1f}M           ║
+    ║                                                                   ║
+    ╚═══════════════════════════════════════════════════════════════════╝
+        """)
+        press_enter_to_continue()
+
+    @staticmethod
+    def display_ask_counter_bid(player_number: int, team_name: str, driver_name: str, price: float) -> bool:
+        """Ask a player if they want to counter-bid for a driver."""
+        clear_screen()
+        print(f"""
+    ╔═══════════════════════════════════════════════════════════════════╗
+    ║              DRIVER MARKET ALERT - PLAYER {player_number}                     ║
+    ╠═══════════════════════════════════════════════════════════════════╣
+    ║                                                                   ║
+    ║  Another team is trying to sign {driver_name:<20}!          ║
+    ║  Current Price: ${price:<10.1f}M                                    ║
+    ║                                                                   ║
+    ║  Do you want to compete for this driver?                          ║
+    ║                                                                   ║
+    ╚═══════════════════════════════════════════════════════════════════╝
+        """)
+        return MenuSystem.confirm_action("Enter bidding war?")

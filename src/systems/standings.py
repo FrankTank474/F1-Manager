@@ -39,10 +39,33 @@ RACE_PRIZE_MONEY = {
 
 
 class StandingsManager:
-    def __init__(self, teams: List[Team], drivers: List[Driver], player_team: Optional[Team] = None):
+    def __init__(self, teams: List[Team], drivers: List[Driver], player_teams = None):
         self.teams = teams
         self.drivers = drivers
-        self.player_team = player_team
+        # Support both single team (backward compat) and list of teams
+        if player_teams is None:
+            self.player_teams = []
+        elif isinstance(player_teams, list):
+            self.player_teams = player_teams
+        else:
+            self.player_teams = [player_teams]
+
+    @property
+    def player_team(self) -> Optional[Team]:
+        """Backward compatibility - returns first player team."""
+        return self.player_teams[0] if self.player_teams else None
+
+    def is_player_team(self, team: Team) -> bool:
+        """Check if team belongs to any player."""
+        return team in self.player_teams
+
+    def get_player_marker(self, team: Team) -> str:
+        """Get player marker (P1, P2) for a team."""
+        try:
+            idx = self.player_teams.index(team)
+            return f"P{idx + 1}"
+        except ValueError:
+            return ""
 
     def get_driver_standings(self) -> List[Tuple[int, Driver, str]]:
         """Return sorted driver standings: (position, driver, team_name)"""
@@ -110,19 +133,23 @@ class StandingsManager:
             else:
                 driver.dnfs += 1
 
-    def calculate_race_prize_money(self, race_results: List[Tuple[Driver, Team, int]]) -> Tuple[float, List[Tuple[str, int, float]]]:
+    def calculate_race_prize_money(self, race_results: List[Tuple[Driver, Team, int]], for_team: Team = None) -> Tuple[float, List[Tuple[str, int, float]]]:
         """
-        Calculate prize money earned by player team in a race.
+        Calculate prize money earned by a player team in a race.
+        Args:
+            race_results: List of (driver, team, position)
+            for_team: Specific team to calculate for (default: first player team)
         Returns: (total_prize, [(driver_name, position, prize), ...])
         """
-        if not self.player_team:
+        target_team = for_team or self.player_team
+        if not target_team:
             return 0.0, []
 
         total_prize = 0.0
         driver_prizes = []
 
         for driver, team, position in race_results:
-            if team == self.player_team and position > 0:
+            if team == target_team and position > 0:
                 prize = RACE_PRIZE_MONEY.get(position, 0.25)
                 total_prize += prize
                 driver_prizes.append((driver.name, position, prize))
@@ -142,8 +169,12 @@ class StandingsManager:
 
         for pos, driver, team_name in standings:
             color = get_team_color(team_name)
-            is_player = self.player_team and team_name == self.player_team.name
-            marker = " *" if is_player else "  "
+            # Check which player (if any) owns this team
+            marker = "  "
+            for i, pt in enumerate(self.player_teams):
+                if team_name == pt.name:
+                    marker = f"P{i+1}"
+                    break
             lines.append(
                 f"{marker}{pos:<3} "
                 f"{color}{driver.name:<25}{Colors.RESET} "
@@ -152,7 +183,10 @@ class StandingsManager:
             )
 
         lines.append("=" * 65)
-        lines.append("  * = Your team")
+        if len(self.player_teams) > 1:
+            lines.append("  P1/P2 = Player teams")
+        elif self.player_teams:
+            lines.append("  P1 = Your team")
         return "\n".join(lines)
 
     def display_constructor_standings(self) -> str:
@@ -168,8 +202,12 @@ class StandingsManager:
 
         for pos, team in standings:
             color = get_team_color(team.name)
-            is_player = self.player_team and team == self.player_team
-            marker = " *" if is_player else "  "
+            # Check which player (if any) owns this team
+            marker = "  "
+            for i, pt in enumerate(self.player_teams):
+                if team == pt:
+                    marker = f"P{i+1}"
+                    break
             lines.append(
                 f"{marker}{pos:<3} "
                 f"{color}{team.name:<30}{Colors.RESET} "
@@ -177,7 +215,10 @@ class StandingsManager:
             )
 
         lines.append("=" * 55)
-        lines.append("  * = Your team")
+        if len(self.player_teams) > 1:
+            lines.append("  P1/P2 = Player teams")
+        elif self.player_teams:
+            lines.append("  P1 = Your team")
         return "\n".join(lines)
 
     def get_season_prize_distribution(self) -> List[Tuple[Team, int]]:

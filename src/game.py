@@ -11,13 +11,18 @@ from .data import F1_DRIVERS, F2_DRIVERS, AI_TEAMS, TRACKS
 from .systems import RaceEngine, DriverMarket, UpgradeSystem, StandingsManager, SponsorManager
 from .systems import RivalryManager, NewsGenerator
 from .systems import MoraleManager, ContractManager, InboxManager, DevelopmentTree
-from .systems.race_engine import TireCompound, Weather
+from .systems.race_engine import TireCompound, Weather, TireState
 from .ui import MenuSystem, clear_screen, press_enter_to_continue, get_int_input
 
 
 class GameState:
     def __init__(self):
-        self.player_team: Optional[Team] = None
+        # Multiplayer support
+        self.player_teams: List[Team] = []
+        self.player_count: int = 1
+        self.current_player_index: int = 0
+        self.turn_order: List[int] = [0]  # Order for decisions each race
+
         self.teams: List[Team] = []
         self.all_drivers: List[Driver] = []
         self.tracks: List[Track] = []
@@ -25,25 +30,123 @@ class GameState:
         self.current_race: int = 0
         self.standings_manager: Optional[StandingsManager] = None
         self.driver_market: Optional[DriverMarket] = None
-        self.upgrade_system: Optional[UpgradeSystem] = None
-        self.sponsor_manager: SponsorManager = SponsorManager()
+
+        # Per-player systems (dict keyed by team name for multiplayer)
+        self.upgrade_systems: Dict[str, UpgradeSystem] = {}
+        self.sponsor_managers: Dict[str, SponsorManager] = {}
+        self.inbox_managers: Dict[str, InboxManager] = {}
+        self.development_trees: Dict[str, DevelopmentTree] = {}
+
+        # Shared systems
         self.rivalry_manager: RivalryManager = RivalryManager()
         self.news_generator: NewsGenerator = NewsGenerator()
         self.morale_manager: MoraleManager = MoraleManager()
         self.contract_manager: ContractManager = ContractManager()
-        self.inbox_manager: InboxManager = InboxManager()
-        self.development_tree: DevelopmentTree = DevelopmentTree()
 
-    def initialize_new_game(self, team_name: str) -> None:
-        """Initialize a new game with player team."""
+    # Backward compatibility properties
+    @property
+    def player_team(self) -> Optional[Team]:
+        """Backward compatible - returns first player team."""
+        return self.player_teams[0] if self.player_teams else None
+
+    @property
+    def upgrade_system(self) -> Optional[UpgradeSystem]:
+        """Backward compatible - returns first player's upgrade system."""
+        if self.player_teams and self.player_teams[0].name in self.upgrade_systems:
+            return self.upgrade_systems[self.player_teams[0].name]
+        return None
+
+    @property
+    def sponsor_manager(self) -> Optional[SponsorManager]:
+        """Backward compatible - returns first player's sponsor manager."""
+        if self.player_teams and self.player_teams[0].name in self.sponsor_managers:
+            return self.sponsor_managers[self.player_teams[0].name]
+        return None
+
+    @property
+    def inbox_manager(self) -> Optional[InboxManager]:
+        """Backward compatible - returns first player's inbox manager."""
+        if self.player_teams and self.player_teams[0].name in self.inbox_managers:
+            return self.inbox_managers[self.player_teams[0].name]
+        return None
+
+    @property
+    def development_tree(self) -> Optional[DevelopmentTree]:
+        """Backward compatible - returns first player's development tree."""
+        if self.player_teams and self.player_teams[0].name in self.development_trees:
+            return self.development_trees[self.player_teams[0].name]
+        return None
+
+    # Multiplayer helper methods
+    def is_player_team(self, team: Team) -> bool:
+        """Check if a team belongs to any player."""
+        return team in self.player_teams
+
+    def get_current_player_team(self) -> Optional[Team]:
+        """Get the team for the current player's turn."""
+        if self.player_teams and self.current_player_index < len(self.player_teams):
+            return self.player_teams[self.current_player_index]
+        return None
+
+    def get_player_number(self, team: Team) -> int:
+        """Get the player number (1 or 2) for a team. Returns 0 if not a player team."""
+        try:
+            return self.player_teams.index(team) + 1
+        except ValueError:
+            return 0
+
+    def advance_player_turn(self) -> None:
+        """Move to next player for team management."""
+        self.current_player_index = (self.current_player_index + 1) % self.player_count
+
+    def rotate_turn_order(self) -> None:
+        """Rotate turn order after each race for fairness."""
+        if len(self.turn_order) > 1:
+            self.turn_order = self.turn_order[1:] + self.turn_order[:1]
+
+    def get_upgrade_system(self, team: Team) -> Optional[UpgradeSystem]:
+        """Get upgrade system for a specific team."""
+        return self.upgrade_systems.get(team.name)
+
+    def get_sponsor_manager(self, team: Team) -> Optional[SponsorManager]:
+        """Get sponsor manager for a specific team."""
+        return self.sponsor_managers.get(team.name)
+
+    def get_inbox_manager(self, team: Team) -> Optional[InboxManager]:
+        """Get inbox manager for a specific team."""
+        return self.inbox_managers.get(team.name)
+
+    def get_development_tree(self, team: Team) -> Optional[DevelopmentTree]:
+        """Get development tree for a specific team."""
+        return self.development_trees.get(team.name)
+
+    def initialize_new_game(self, team_names: List[str] = None, team_name: str = None) -> None:
+        """Initialize a new game with player team(s).
+
+        Args:
+            team_names: List of team names for multiplayer
+            team_name: Single team name for backward compatibility
+        """
+        # Handle backward compatibility
+        if team_names is None:
+            if team_name:
+                team_names = [team_name]
+            else:
+                team_names = ["New Team"]
+
+        self.player_count = len(team_names)
+        self.turn_order = list(range(self.player_count))
+        self.current_player_index = 0
+
         # Create all drivers
         self._create_drivers()
 
         # Create AI teams
         self._create_ai_teams()
 
-        # Create player team
-        self._create_player_team(team_name)
+        # Create player team(s)
+        for i, name in enumerate(team_names):
+            self._create_player_team(name, player_number=i + 1)
 
         # Create tracks
         self._create_tracks()
@@ -101,8 +204,8 @@ class GameState:
 
             self.teams.append(team)
 
-    def _create_player_team(self, team_name: str) -> None:
-        """Create the player's team."""
+    def _create_player_team(self, team_name: str, player_number: int = 1) -> None:
+        """Create a player's team."""
         car = Car(
             downforce=64,
             aero_efficiency=64,
@@ -112,14 +215,16 @@ class GameState:
             tire_cooling=65
         )
 
-        self.player_team = Team(
+        player_team = Team(
             name=team_name,
             budget=50,
             car=car,
-            is_player_team=True
+            is_player_team=True,
+            player_number=player_number
         )
 
-        self.teams.append(self.player_team)
+        self.player_teams.append(player_team)
+        self.teams.append(player_team)
 
     def _create_tracks(self) -> None:
         """Create track instances from data."""
@@ -142,9 +247,20 @@ class GameState:
 
     def _initialize_systems(self) -> None:
         """Initialize game systems."""
-        self.standings_manager = StandingsManager(self.teams, self.all_drivers, self.player_team)
+        self.standings_manager = StandingsManager(self.teams, self.all_drivers, self.player_teams)
         self.driver_market = DriverMarket(self.all_drivers, self.teams)
-        self.upgrade_system = UpgradeSystem(self.player_team)
+
+        # Create per-player systems
+        self.upgrade_systems = {}
+        self.sponsor_managers = {}
+        self.inbox_managers = {}
+        self.development_trees = {}
+
+        for team in self.player_teams:
+            self.upgrade_systems[team.name] = UpgradeSystem(team)
+            self.sponsor_managers[team.name] = SponsorManager()
+            self.inbox_managers[team.name] = InboxManager()
+            self.development_trees[team.name] = DevelopmentTree()
 
     def get_next_track(self) -> Optional[Track]:
         """Get the next track in the calendar."""
@@ -544,22 +660,38 @@ class Game:
 
     def _start_new_game(self) -> None:
         """Start a new game."""
-        team_name = self.menu.display_new_game_menu()
+        # Ask for number of players
+        player_count = self.menu.display_player_count_menu()
 
-        if not team_name:
-            team_name = "New Team"
+        # Get team names for each player
+        team_names = []
+        for i in range(player_count):
+            if player_count > 1:
+                team_name = self.menu.display_new_game_menu_multiplayer(i + 1)
+            else:
+                team_name = self.menu.display_new_game_menu()
 
-        self.state.initialize_new_game(team_name)
+            if not team_name:
+                team_name = f"Team {i + 1}" if player_count > 1 else "New Team"
+            team_names.append(team_name)
 
-        # Force player to sign drivers
-        self._initial_driver_signing()
+        self.state.initialize_new_game(team_names=team_names)
 
-        # Offer sponsor selection
-        clear_screen()
-        print("\n  SPONSOR SELECTION")
-        print("  Sponsors pay you money when you meet race objectives!")
-        if MenuSystem.confirm_action("Would you like to review sponsor offers?"):
-            self._select_sponsor()
+        # Force player(s) to sign drivers
+        if player_count > 1:
+            self._initial_driver_signing_multiplayer()
+        else:
+            self._initial_driver_signing()
+
+        # Offer sponsor selection for each player
+        for i, team in enumerate(self.state.player_teams):
+            if player_count > 1:
+                self.menu.display_player_switch_prompt(i + 1, "SPONSOR SELECTION")
+            clear_screen()
+            print(f"\n  SPONSOR SELECTION - {team.name}")
+            print("  Sponsors pay you money when you meet race objectives!")
+            if MenuSystem.confirm_action("Would you like to review sponsor offers?"):
+                self._select_sponsor_for_team(team)
 
         # Enter main game loop
         self._main_game_loop()
@@ -571,6 +703,67 @@ class Game:
             self._main_game_loop()
         else:
             self.menu.display_error("No save file found or failed to load.")
+
+    def _initial_driver_signing_multiplayer(self) -> None:
+        """Handle initial driver signing for multiplayer - alternating picks."""
+        # Total drivers needed
+        total_needed = self.state.player_count * 2
+        drivers_signed = 0
+
+        # Track which player's turn it is
+        current_player_idx = 0
+
+        while drivers_signed < total_needed:
+            team = self.state.player_teams[current_player_idx]
+            player_num = current_player_idx + 1
+
+            # Skip if this player already has 2 drivers
+            if len(team.drivers) >= 2:
+                current_player_idx = (current_player_idx + 1) % self.state.player_count
+                continue
+
+            # Show player switch prompt
+            self.menu.display_player_switch_prompt(player_num, "DRIVER SIGNING")
+
+            clear_screen()
+            remaining = 2 - len(team.drivers)
+            print(f"\n  PLAYER {player_num} - {team.name}")
+            print(f"  You need to sign {remaining} more driver(s) to complete your lineup.")
+            print(self.state.driver_market.display_market(team.budget))
+
+            driver_num = get_int_input(
+                f"\n  Enter driver number to sign (1-{len(self.state.driver_market.get_available_drivers())}): ",
+                1, len(self.state.driver_market.get_available_drivers())
+            )
+
+            if driver_num == -1:
+                if len(team.drivers) < 2:
+                    print("\n  You must sign 2 drivers before continuing!")
+                    press_enter_to_continue()
+                    continue
+            else:
+                drivers = self.state.driver_market.get_available_drivers()
+                if 0 < driver_num <= len(drivers):
+                    selected_driver = drivers[driver_num - 1]
+                    print(self.state.driver_market.display_driver_details(selected_driver))
+
+                    if MenuSystem.confirm_action(f"Sign {selected_driver.name} for ${selected_driver.market_value}M?"):
+                        success, message = self.state.driver_market.sign_driver(team, selected_driver)
+                        if success:
+                            # Create contract for the driver
+                            self.state.contract_manager.create_contract(
+                                driver_name=selected_driver.name,
+                                team_name=team.name,
+                                salary=selected_driver.salary,
+                                years=2
+                            )
+                            self.menu.display_success(message)
+                            drivers_signed += 1
+                        else:
+                            self.menu.display_error(message)
+
+            # Move to next player
+            current_player_idx = (current_player_idx + 1) % self.state.player_count
 
     def _initial_driver_signing(self) -> None:
         """Handle initial driver signing at game start."""
@@ -616,13 +809,27 @@ class Game:
     def _main_game_loop(self) -> None:
         """Main game menu loop."""
         while self.running:
-            choice = self.menu.display_main_menu(
-                self.state.player_team.name,
-                self.state.player_team.budget,
-                self.state.current_season,
-                self.state.current_race + 1,
-                len(self.state.tracks)
-            )
+            # For multiplayer, show current player's team
+            current_team = self.state.get_current_player_team() or self.state.player_team
+            player_num = self.state.current_player_index + 1
+
+            if self.state.player_count > 1:
+                choice = self.menu.display_multiplayer_main_menu(
+                    player_num,
+                    current_team.name,
+                    current_team.budget,
+                    self.state.current_season,
+                    self.state.current_race + 1,
+                    len(self.state.tracks)
+                )
+            else:
+                choice = self.menu.display_main_menu(
+                    current_team.name,
+                    current_team.budget,
+                    self.state.current_season,
+                    self.state.current_race + 1,
+                    len(self.state.tracks)
+                )
 
             if choice == '1':
                 self._race_weekend()
@@ -801,9 +1008,11 @@ class Game:
 
     def _race_weekend(self) -> None:
         """Handle a race weekend."""
-        if len(self.state.player_team.drivers) < 2:
-            self.menu.display_error("You need 2 drivers to race! Go to Team Management to sign drivers.")
-            return
+        # Check all player teams have 2 drivers
+        for team in self.state.player_teams:
+            if len(team.drivers) < 2:
+                self.menu.display_error(f"{team.name} needs 2 drivers to race! Go to Team Management to sign drivers.")
+                return
 
         track = self.state.get_next_track()
         if not track:
@@ -817,8 +1026,12 @@ class Game:
             len(self.state.tracks)
         )
 
-        # Create race engine with rivalry manager
-        race_engine = RaceEngine(track, self.state.teams, self.state.player_team, self.state.rivalry_manager)
+        # Create race engine with all player teams
+        race_engine = RaceEngine(
+            track, self.state.teams,
+            player_teams=self.state.player_teams,
+            rivalry_manager=self.state.rivalry_manager
+        )
 
         # Qualifying
         clear_screen()
@@ -827,13 +1040,34 @@ class Game:
         print(race_engine.display_qualifying_results())
         press_enter_to_continue()
 
-        # Tire selection
-        tire_choice = self.menu.display_tire_selection("Dry")
+        # Tire selection for each player
         tire_map = {'1': TireCompound.SOFT, '2': TireCompound.MEDIUM, '3': TireCompound.HARD}
-        starting_tire = tire_map.get(tire_choice, TireCompound.MEDIUM)
+        player_tire_choices = {}
 
-        # Initialize race
+        for i, team in enumerate(self.state.player_teams):
+            player_num = i + 1
+            if self.state.player_count > 1:
+                self.menu.display_player_switch_prompt(player_num, "TIRE SELECTION")
+                tire_choice = self.menu.display_tire_selection_multiplayer(
+                    player_num, team.name, "Dry"
+                )
+            else:
+                tire_choice = self.menu.display_tire_selection("Dry")
+
+            player_tire_choices[team.name] = tire_map.get(tire_choice, TireCompound.MEDIUM)
+
+        # Initialize race with first player's tire (engine will handle per-team tires)
+        starting_tire = player_tire_choices.get(
+            self.state.player_teams[0].name, TireCompound.MEDIUM
+        )
         race_engine.initialize_race(starting_tire)
+
+        # Set tires for other player teams
+        for team in self.state.player_teams[1:]:
+            tire = player_tire_choices.get(team.name, TireCompound.MEDIUM)
+            for entry in race_engine.race_state.entries:
+                if entry.team == team:
+                    entry.tire = TireState(tire)
 
         # Race start
         clear_screen()
@@ -857,10 +1091,6 @@ class Game:
                 # Check for pit stop prompt
                 pit_info_list = race_engine.get_player_pit_prompt()
                 if pit_info_list:
-                    # Show full race standings first
-                    clear_screen()
-                    print(race_engine.get_race_status())
-
                     compound_map = {
                         '1': TireCompound.SOFT,
                         '2': TireCompound.MEDIUM,
@@ -869,28 +1099,72 @@ class Game:
                         '5': TireCompound.WET
                     }
 
-                    # Handle each driver individually
-                    for pit_info in pit_info_list:
-                        choice = self.menu.display_pit_stop_prompt(
-                            pit_info["driver"],
-                            pit_info["tire_wear"],
-                            pit_info["current_compound"],
-                            pit_info["weather"],
-                            pit_info["position"],
-                            pit_info["laps_remaining"],
-                            pit_info.get("grip_level", "GOOD")
-                        )
+                    # Group pit prompts by player for multiplayer
+                    if self.state.player_count > 1:
+                        # Group by player number
+                        by_player = {}
+                        for pit_info in pit_info_list:
+                            pnum = pit_info.get("player_number", 1)
+                            if pnum not in by_player:
+                                by_player[pnum] = []
+                            by_player[pnum].append(pit_info)
 
-                        if choice.lower() == 'e':
-                            # Stay out until end - no more prompts for this driver
-                            race_engine.set_driver_no_pit_prompts(pit_info["driver"])
-                            print(f"  {pit_info['driver']} will stay out until the end of the race.")
-                            press_enter_to_continue()
-                        elif choice != 's' and choice != 'S':
-                            if choice in compound_map:
-                                result = race_engine.pit_driver(pit_info["driver"], compound_map[choice])
-                                print(f"  {result}")
+                        # Handle in turn order
+                        for player_idx in self.state.turn_order:
+                            player_num = player_idx + 1
+                            if player_num not in by_player:
+                                continue
+
+                            # Show player switch prompt
+                            self.menu.display_player_switch_prompt(player_num, "PIT DECISION")
+                            clear_screen()
+                            print(race_engine.get_race_status())
+
+                            for pit_info in by_player[player_num]:
+                                choice = self.menu.display_pit_stop_prompt(
+                                    pit_info["driver"],
+                                    pit_info["tire_wear"],
+                                    pit_info["current_compound"],
+                                    pit_info["weather"],
+                                    pit_info["position"],
+                                    pit_info["laps_remaining"],
+                                    pit_info.get("grip_level", "GOOD")
+                                )
+
+                                if choice.lower() == 'e':
+                                    race_engine.set_driver_no_pit_prompts(pit_info["driver"])
+                                    print(f"  {pit_info['driver']} will stay out until the end of the race.")
+                                    press_enter_to_continue()
+                                elif choice != 's' and choice != 'S':
+                                    if choice in compound_map:
+                                        result = race_engine.pit_driver(pit_info["driver"], compound_map[choice])
+                                        print(f"  {result}")
+                                        press_enter_to_continue()
+                    else:
+                        # Single player - original behavior
+                        clear_screen()
+                        print(race_engine.get_race_status())
+
+                        for pit_info in pit_info_list:
+                            choice = self.menu.display_pit_stop_prompt(
+                                pit_info["driver"],
+                                pit_info["tire_wear"],
+                                pit_info["current_compound"],
+                                pit_info["weather"],
+                                pit_info["position"],
+                                pit_info["laps_remaining"],
+                                pit_info.get("grip_level", "GOOD")
+                            )
+
+                            if choice.lower() == 'e':
+                                race_engine.set_driver_no_pit_prompts(pit_info["driver"])
+                                print(f"  {pit_info['driver']} will stay out until the end of the race.")
                                 press_enter_to_continue()
+                            elif choice != 's' and choice != 'S':
+                                if choice in compound_map:
+                                    result = race_engine.pit_driver(pit_info["driver"], compound_map[choice])
+                                    print(f"  {result}")
+                                    press_enter_to_continue()
 
         # Race complete - show results
         clear_screen()
@@ -898,43 +1172,48 @@ class Game:
         self.state.standings_manager.update_race_results(results)
         print(race_engine.display_race_results())
 
-        # Calculate and award race prize money
-        total_prize, driver_prizes = self.state.standings_manager.calculate_race_prize_money(results)
-        if total_prize > 0:
-            self.state.player_team.budget += total_prize
-            print("\n" + "-" * 50)
-            print("  RACE PRIZE MONEY EARNED")
-            print("-" * 50)
-            for driver_name, position, prize in driver_prizes:
-                print(f"  P{position} {driver_name}: ${prize:.2f}M")
-            print("-" * 50)
-            print(f"  Total Earned: ${total_prize:.2f}M")
-            print(f"  New Budget: ${self.state.player_team.budget:.1f}M")
-            print("-" * 50)
+        # Calculate and award race prize money for ALL player teams
+        for team in self.state.player_teams:
+            total_prize, driver_prizes = self.state.standings_manager.calculate_race_prize_money(results, for_team=team)
+            if total_prize > 0:
+                team.budget += total_prize
+                player_marker = f"P{self.state.get_player_number(team)} " if self.state.player_count > 1 else ""
+                print("\n" + "-" * 50)
+                print(f"  {player_marker}RACE PRIZE MONEY - {team.name}")
+                print("-" * 50)
+                for driver_name, position, prize in driver_prizes:
+                    print(f"  P{position} {driver_name}: ${prize:.2f}M")
+                print("-" * 50)
+                print(f"  Total Earned: ${total_prize:.2f}M")
+                print(f"  New Budget: ${team.budget:.1f}M")
+                print("-" * 50)
 
-        # Check sponsor objective
-        if self.state.sponsor_manager.current_sponsor:
-            # Get best finish from player team
-            best_finish = 99
-            for driver, team, position in results:
-                if team == self.state.player_team and position > 0:
-                    best_finish = min(best_finish, position)
-            if best_finish == 99:
-                best_finish = 0  # Both DNF'd
+        # Check sponsor objective for ALL player teams
+        for team in self.state.player_teams:
+            sponsor_mgr = self.state.get_sponsor_manager(team)
+            if sponsor_mgr and sponsor_mgr.current_sponsor:
+                # Get best finish from this player team
+                best_finish = 99
+                for driver, t, position in results:
+                    if t == team and position > 0:
+                        best_finish = min(best_finish, position)
+                if best_finish == 99:
+                    best_finish = 0  # Both DNF'd
 
-            met, payment = self.state.sponsor_manager.check_race_objective(best_finish)
-            print("\n" + "-" * 50)
-            print("  SPONSOR OBJECTIVE")
-            print("-" * 50)
-            sponsor = self.state.sponsor_manager.current_sponsor
-            print(f"  {sponsor.name}: {sponsor.objective.description}")
-            if met:
-                self.state.player_team.budget += payment
-                print(f"  OBJECTIVE MET! Earned ${payment:.2f}M")
-                print(f"  New Budget: ${self.state.player_team.budget:.1f}M")
-            else:
-                print(f"  Objective NOT met. No sponsor payment.")
-            print("-" * 50)
+                met, payment = sponsor_mgr.check_race_objective(best_finish)
+                player_marker = f"P{self.state.get_player_number(team)} " if self.state.player_count > 1 else ""
+                print("\n" + "-" * 50)
+                print(f"  {player_marker}SPONSOR OBJECTIVE - {team.name}")
+                print("-" * 50)
+                sponsor = sponsor_mgr.current_sponsor
+                print(f"  {sponsor.name}: {sponsor.objective.description}")
+                if met:
+                    team.budget += payment
+                    print(f"  OBJECTIVE MET! Earned ${payment:.2f}M")
+                    print(f"  New Budget: ${team.budget:.1f}M")
+                else:
+                    print(f"  Objective NOT met. No sponsor payment.")
+                print("-" * 50)
 
         # Check for rising stars
         rising_star_messages = self.state.process_rising_stars(results)
@@ -1006,43 +1285,60 @@ class Game:
                 print(f"  {msg}")
             print("-" * 50)
 
-        # Process development progress
-        dev_messages = self.state.development_tree.advance_race(self.state.player_team.car)
-        if dev_messages:
-            print("\n" + "-" * 50)
-            print("  CAR DEVELOPMENT")
-            print("-" * 50)
-            for msg in dev_messages:
-                print(f"  {msg}")
-            print("-" * 50)
+        # Process development progress for ALL player teams
+        for team in self.state.player_teams:
+            dev_tree = self.state.get_development_tree(team)
+            if dev_tree:
+                dev_messages = dev_tree.advance_race(team.car)
+                if dev_messages:
+                    player_marker = f"P{self.state.get_player_number(team)} " if self.state.player_count > 1 else ""
+                    print("\n" + "-" * 50)
+                    print(f"  {player_marker}CAR DEVELOPMENT - {team.name}")
+                    print("-" * 50)
+                    for msg in dev_messages:
+                        print(f"  {msg}")
+                    print("-" * 50)
 
-        # Generate inbox messages for between races
+        # Generate inbox messages for between races (for all player teams)
         self.state.process_post_race_inbox(results)
 
         # Advance other managers
         self.state.morale_manager.advance_race()
-        self.state.inbox_manager.advance_race()
         self.state.contract_manager.advance_race()
+        for team in self.state.player_teams:
+            inbox_mgr = self.state.get_inbox_manager(team)
+            if inbox_mgr:
+                inbox_mgr.advance_race()
 
-        # Check for expiring contracts
-        contract_alerts = self.state.contract_manager.check_expiring_contracts(self.state.player_team.name)
-        if contract_alerts:
-            print("\n" + "-" * 50)
-            print("  CONTRACT ALERTS")
-            print("-" * 50)
-            for alert in contract_alerts:
-                print(f"  {alert}")
-            print("-" * 50)
+        # Check for expiring contracts for ALL player teams
+        for team in self.state.player_teams:
+            contract_alerts = self.state.contract_manager.check_expiring_contracts(team.name)
+            if contract_alerts:
+                player_marker = f"P{self.state.get_player_number(team)} " if self.state.player_count > 1 else ""
+                print("\n" + "-" * 50)
+                print(f"  {player_marker}CONTRACT ALERTS - {team.name}")
+                print("-" * 50)
+                for alert in contract_alerts:
+                    print(f"  {alert}")
+                print("-" * 50)
 
         # Show updated standings
         print(self.state.standings_manager.display_driver_standings())
         press_enter_to_continue()
 
-        # Show inbox notification if any
-        inbox_notif = self.state.inbox_manager.get_notification_summary()
-        if inbox_notif:
-            print(f"\n  {inbox_notif}")
+        # Show inbox notification for ALL player teams
+        for team in self.state.player_teams:
+            inbox_mgr = self.state.get_inbox_manager(team)
+            if inbox_mgr:
+                inbox_notif = inbox_mgr.get_notification_summary()
+                if inbox_notif:
+                    player_marker = f"P{self.state.get_player_number(team)} " if self.state.player_count > 1 else ""
+                    print(f"\n  {player_marker}{team.name}: {inbox_notif}")
+        if self.state.player_count > 1:
             press_enter_to_continue()
+
+        # Rotate turn order for fairness in multiplayer
+        self.state.rotate_turn_order()
 
         # Advance to next race (pass results for AI income)
         ai_upgrade_messages = self.state.advance_race(results)
@@ -1248,26 +1544,38 @@ class Game:
     def _team_management(self) -> None:
         """Team management menu."""
         while True:
-            choice = self.menu.display_team_menu()
+            # Get current player's team for multiplayer
+            current_team = self.state.get_current_player_team() or self.state.player_team
+            player_num = self.state.current_player_index + 1
+
+            if self.state.player_count > 1:
+                choice = self.menu.display_multiplayer_team_menu(player_num, current_team.name)
+            else:
+                choice = self.menu.display_team_menu()
 
             if choice.lower() == 'b':
                 break
+            elif choice.lower() == 'e' and self.state.player_count > 1:
+                # End turn - switch to other player
+                self.state.advance_player_turn()
+                next_player = self.state.current_player_index + 1
+                self.menu.display_player_switch_prompt(next_player, "TEAM MANAGEMENT")
             elif choice == '1':
-                self._view_my_drivers()
+                self._view_my_drivers_for_team(current_team)
             elif choice == '2':
-                self._view_my_car()
+                self._view_my_car_for_team(current_team)
             elif choice == '3':
-                self._driver_market()
+                self._driver_market_for_team(current_team)
             elif choice == '4':
-                self._car_development()
+                self._car_development_for_team(current_team)
             elif choice == '5':
                 self._view_rival_teams()
             elif choice == '6':
-                self._manage_sponsors()
+                self._manage_sponsors_for_team(current_team)
             elif choice == '7':
                 self._view_rivalries()
             elif choice == '8':
-                self._view_inbox()
+                self._view_inbox_for_team(current_team)
 
     def _view_my_drivers(self) -> None:
         """View player's current drivers with morale and contracts."""
@@ -1535,9 +1843,18 @@ class Game:
 
     def _view_inbox(self) -> None:
         """View and read inbox messages."""
+        self._view_inbox_for_team(self.state.player_team)
+
+    def _view_inbox_for_team(self, team: Team) -> None:
+        """View and read inbox messages for a specific team."""
+        inbox_mgr = self.state.get_inbox_manager(team)
+        if not inbox_mgr:
+            self.menu.display_error("No inbox available.")
+            return
+
         while True:
             clear_screen()
-            print(self.state.inbox_manager.display_inbox())
+            print(inbox_mgr.display_inbox())
 
             print("\n  Enter message number to read, or B to go back:")
             choice = input("  Choice: ").strip().lower()
@@ -1547,14 +1864,285 @@ class Game:
 
             try:
                 num = int(choice)
-                if 0 < num <= len(self.state.inbox_manager.messages):
-                    msg_content = self.state.inbox_manager.display_message(num - 1)
+                if 0 < num <= len(inbox_mgr.messages):
+                    msg_content = inbox_mgr.display_message(num - 1)
                     if msg_content:
                         clear_screen()
                         print(msg_content)
                         press_enter_to_continue()
             except ValueError:
                 pass
+
+    # Wrapper methods for multiplayer team management
+    def _view_my_drivers_for_team(self, team: Team) -> None:
+        """View drivers for a specific team."""
+        clear_screen()
+        print(f"\n  {team.name} - DRIVERS")
+        print("=" * 70)
+
+        if not team.drivers:
+            print("\n  No drivers signed!")
+        else:
+            for i, driver in enumerate(team.drivers, 1):
+                print(f"\n  {'='*60}")
+                print(f"  Driver {i}: {driver}")
+                print(f"  {'='*60}")
+                print(driver.get_stats_display())
+                print(f"  Season Points: {driver.season_points}")
+
+                # Contract info
+                contract = self.state.contract_manager.get_contract(driver.name)
+                if contract:
+                    num_one = " [#1 DRIVER]" if contract.is_number_one else ""
+                    print(f"\n  CONTRACT:{num_one}")
+                    print(f"    Salary: ${contract.salary}M/season")
+                    print(f"    Years Remaining: {contract.years_remaining}")
+                    if contract.is_negotiating:
+                        print(f"    STATUS: NEEDS NEGOTIATION!")
+                else:
+                    print(f"\n  CONTRACT: ${driver.salary}M/season")
+
+                # Morale info
+                morale = self.state.morale_manager.get_morale(driver.name)
+                morale_bar = "[" + "=" * (morale.morale // 5) + " " * (20 - morale.morale // 5) + "]"
+                print(f"\n  MORALE: {morale_bar} {morale.morale}/100 ({morale.level.value})")
+                print(f"  Confidence: {morale.confidence}/100")
+
+        print("\n" + "=" * 70)
+        print("\n  Options:")
+        print("  [1] Negotiate Contract")
+        print("  [B] Back")
+
+        choice = input("\n  Choice: ").strip().lower()
+        if choice == '1':
+            self._negotiate_contracts_for_team(team)
+
+    def _view_my_car_for_team(self, team: Team) -> None:
+        """View car stats for a specific team."""
+        clear_screen()
+        print(f"\n  {team.name} - CAR")
+        print("=" * 50)
+        print(team.car.get_stats_display())
+        print("=" * 50)
+        press_enter_to_continue()
+
+    def _driver_market_for_team(self, team: Team) -> None:
+        """Handle driver market for a specific team."""
+        while True:
+            clear_screen()
+            print(self.state.driver_market.display_market(team.budget))
+
+            print("\n  Options:")
+            print("  [#] Sign a driver (enter number)")
+            print("  [R] Release a driver")
+            print("  [B] Back")
+
+            choice = input("\n  Enter choice: ").strip().lower()
+
+            if choice == 'b':
+                break
+            elif choice == 'r':
+                self._release_driver_from_team(team)
+            else:
+                try:
+                    driver_num = int(choice)
+                    drivers = self.state.driver_market.get_available_drivers()
+                    if 0 < driver_num <= len(drivers):
+                        selected_driver = drivers[driver_num - 1]
+                        print(self.state.driver_market.display_driver_details(selected_driver))
+
+                        if MenuSystem.confirm_action(f"Sign {selected_driver.name} for ${selected_driver.market_value}M?"):
+                            success, message = self.state.driver_market.sign_driver(team, selected_driver)
+                            if success:
+                                self.menu.display_success(message)
+                            else:
+                                self.menu.display_error(message)
+                except ValueError:
+                    pass
+
+    def _release_driver_from_team(self, team: Team) -> None:
+        """Release a driver from a specific team."""
+        if not team.drivers:
+            self.menu.display_error("No drivers to release!")
+            return
+
+        print("\n  Your drivers:")
+        for i, driver in enumerate(team.drivers, 1):
+            print(f"  [{i}] {driver.name}")
+
+        choice = get_int_input(
+            "\n  Select driver to release (B to cancel): ",
+            1, len(team.drivers)
+        )
+
+        if choice == -1:
+            return
+
+        driver = team.drivers[choice - 1]
+        if MenuSystem.confirm_action(f"Release {driver.name}?"):
+            success, message = self.state.driver_market.release_driver(team, driver)
+            if success:
+                self.menu.display_success(message)
+            else:
+                self.menu.display_error(message)
+
+    def _car_development_for_team(self, team: Team) -> None:
+        """Manage car development for a specific team."""
+        dev_tree = self.state.get_development_tree(team)
+        if not dev_tree:
+            self.menu.display_error("No development tree available.")
+            return
+
+        while True:
+            clear_screen()
+            car = team.car
+            budget = team.budget
+
+            # Show current progress
+            print(dev_tree.get_progress_display())
+
+            # Show available developments
+            print(dev_tree.display_available_developments(car, budget))
+
+            print("\n  Options:")
+            print("  [#] Start development (enter number)")
+            print("  [T] View full tech tree")
+            print("  [B] Back")
+
+            choice = input("\n  Choice: ").strip().lower()
+
+            if choice == 'b':
+                break
+            elif choice == 't':
+                clear_screen()
+                print(dev_tree.display_development_tree(car, budget))
+                press_enter_to_continue()
+            else:
+                try:
+                    num = int(choice)
+                    available = dev_tree.get_available_nodes()
+                    if 0 < num <= len(available):
+                        node = available[num - 1]
+                        cost = dev_tree.get_scaling_cost(node, car)
+                        print(f"\n  {node.name}")
+                        print(f"  Cost: ${cost}M")
+                        print(f"  Development Time: {node.development_time} races")
+                        if MenuSystem.confirm_action("Start development?"):
+                            success, msg = dev_tree.start_development(node.name, car, budget)
+                            if success:
+                                team.budget -= cost
+                                self.menu.display_success(msg)
+                            else:
+                                self.menu.display_error(msg)
+                except ValueError:
+                    pass
+
+    def _manage_sponsors_for_team(self, team: Team) -> None:
+        """Manage sponsors for a specific team."""
+        sponsor_mgr = self.state.get_sponsor_manager(team)
+        if not sponsor_mgr:
+            self.menu.display_error("No sponsor manager available.")
+            return
+
+        clear_screen()
+        if sponsor_mgr.current_sponsor:
+            print("\n" + "=" * 60)
+            print(f"  CURRENT SPONSOR - {team.name}")
+            print("=" * 60)
+            sponsor = sponsor_mgr.current_sponsor
+            print(f"  {sponsor.name}")
+            print(f"  Tier: {sponsor.tier.value}")
+            print(f"\n  Objective: {sponsor.objective.description}")
+            print(f"  Payment per race (if met): ${sponsor.payment_per_race}M")
+            print(f"\n  Season Progress:")
+            success_rate = (sponsor_mgr.objectives_met / sponsor_mgr.races_completed * 100) if sponsor_mgr.races_completed > 0 else 0
+            print(f"    Objectives Met: {sponsor_mgr.objectives_met}/{sponsor_mgr.races_completed} ({success_rate:.0f}%)")
+            print(f"    Race Earnings: ${sponsor_mgr.total_earnings:.2f}M")
+            print(f"    Season Bonus Target: 80% objectives met")
+            print("=" * 60)
+            press_enter_to_continue()
+        else:
+            print("\n  You don't have a sponsor for this season!")
+            if MenuSystem.confirm_action("Would you like to view sponsor offers?"):
+                self._select_sponsor_for_team(team)
+
+    def _negotiate_contracts_for_team(self, team: Team) -> None:
+        """Negotiate contracts for drivers on a specific team."""
+        expiring = []
+        for driver in team.drivers:
+            contract = self.state.contract_manager.get_contract(driver.name)
+            if contract and (contract.is_expiring or contract.is_negotiating):
+                expiring.append((driver, contract))
+
+        if not expiring:
+            print("\n  No contracts require negotiation at this time.")
+            press_enter_to_continue()
+            return
+
+        clear_screen()
+        print("\n" + "=" * 60)
+        print("  CONTRACT NEGOTIATIONS")
+        print("=" * 60)
+
+        for i, (driver, contract) in enumerate(expiring, 1):
+            print(f"\n  [{i}] {driver.name}")
+            print(f"      Current Salary: ${contract.salary}M")
+            print(f"      Years Remaining: {contract.years_remaining}")
+            status = "EXPIRING" if contract.is_expiring else "NEGOTIATING"
+            print(f"      Status: {status}")
+
+        print("\n  [B] Back")
+
+        choice = get_int_input("\n  Select driver to negotiate with: ", 1, len(expiring))
+        if choice == -1:
+            return
+
+        driver, contract = expiring[choice - 1]
+        self._negotiate_single_contract(driver, contract, team)
+
+    def _negotiate_single_contract(self, driver, contract, team: Team) -> None:
+        """Negotiate with a single driver."""
+        clear_screen()
+        demands = self.state.contract_manager.get_demands(driver.name)
+        print(f"\n  NEGOTIATING WITH {driver.name.upper()}")
+        print("=" * 60)
+        print(f"  Current Salary: ${contract.salary}M")
+        print(f"  Driver's Market Value: ${driver.market_value}M")
+        print(f"  Your Budget: ${team.budget:.1f}M")
+
+        if demands:
+            print("\n  DRIVER'S DEMANDS:")
+            for d in demands:
+                importance = "*" * d.importance
+                print(f"    - {d.description} [{importance}]")
+
+        print("\n  MAKE YOUR OFFER:")
+        new_salary = get_int_input("  Annual Salary (M): $", 1, int(team.budget))
+        if new_salary == -1:
+            return
+
+        years = get_int_input("  Contract Length (years, 1-3): ", 1, 3)
+        if years == -1:
+            return
+
+        grant_number_one = False
+        if any(d.demand_type.value == "number_one_status" for d in demands):
+            grant_number_one = MenuSystem.confirm_action("Grant #1 driver status?")
+
+        result = self.state.contract_manager.make_offer(
+            driver.name, new_salary, years, grant_number_one, False, 0
+        )
+
+        clear_screen()
+        print(f"\n  NEGOTIATION RESULT")
+        print("=" * 60)
+        print(f"  {result.message}")
+
+        if result.accepted:
+            team.budget -= new_salary  # First year salary
+            self.menu.display_success(f"Contract signed! {driver.name} committed for {years} years.")
+        else:
+            self.menu.display_error("Negotiations failed. Try again with a better offer.")
 
     def _car_development(self) -> None:
         """Manage car development tree."""
@@ -1752,22 +2340,31 @@ class Game:
 
     def _select_sponsor(self) -> None:
         """Select a sponsor from offers."""
+        self._select_sponsor_for_team(self.state.player_team)
+
+    def _select_sponsor_for_team(self, team: Team) -> None:
+        """Select a sponsor for a specific team."""
+        sponsor_mgr = self.state.get_sponsor_manager(team)
+        if not sponsor_mgr:
+            return
+
         # Generate offers based on team's constructor position (as reputation)
-        position = self.state.get_player_constructor_position()
+        standings = self.state.standings_manager.get_constructor_standings()
+        position = next((pos for pos, t in standings if t == team), 11)
         # Convert position to reputation (1st = 100, 11th = 0)
         reputation = max(0, 100 - (position - 1) * 10)
 
-        offers = self.state.sponsor_manager.generate_sponsor_offers(reputation)
+        offers = sponsor_mgr.generate_sponsor_offers(reputation)
 
         clear_screen()
-        print(self.state.sponsor_manager.display_sponsor_selection(offers))
+        print(sponsor_mgr.display_sponsor_selection(offers))
 
         choice = get_int_input("\n  Select sponsor (1-5), or B to decline all: ", 1, 5)
 
         if choice != -1:
             selected = offers[choice - 1]
             if MenuSystem.confirm_action(f"Sign with {selected.name}?"):
-                self.state.sponsor_manager.select_sponsor(selected)
+                sponsor_mgr.select_sponsor(selected)
                 self.menu.display_success(f"Signed sponsorship deal with {selected.name}!")
             else:
                 print("  Sponsor offer declined.")

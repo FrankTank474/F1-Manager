@@ -208,7 +208,7 @@ class NewsGenerator:
 
         # === RISING STAR HEADLINES ===
         for driver, team, pos in race_results:
-            if driver.age <= 23 and pos <= 5 and team.car.overall < 80:
+            if driver.age <= 23 and pos > 0 and pos <= 5 and team.car.overall < 80:
                 headlines.append(Headline(
                     headline_type=HeadlineType.RISING_STAR,
                     title=f"Star in the making: {driver.name}",

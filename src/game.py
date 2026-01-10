@@ -10,6 +10,7 @@ from .models import Driver, DriverStats, Car, Team, Track, TrackType
 from .data import F1_DRIVERS, F2_DRIVERS, AI_TEAMS, TRACKS
 from .systems import RaceEngine, DriverMarket, UpgradeSystem, StandingsManager, SponsorManager
 from .systems import RivalryManager, NewsGenerator
+from .systems import MoraleManager, ContractManager, InboxManager, DevelopmentTree
 from .systems.race_engine import TireCompound, Weather
 from .ui import MenuSystem, clear_screen, press_enter_to_continue, get_int_input
 
@@ -28,6 +29,10 @@ class GameState:
         self.sponsor_manager: SponsorManager = SponsorManager()
         self.rivalry_manager: RivalryManager = RivalryManager()
         self.news_generator: NewsGenerator = NewsGenerator()
+        self.morale_manager: MoraleManager = MoraleManager()
+        self.contract_manager: ContractManager = ContractManager()
+        self.inbox_manager: InboxManager = InboxManager()
+        self.development_tree: DevelopmentTree = DevelopmentTree()
 
     def initialize_new_game(self, team_name: str) -> None:
         """Initialize a new game with player team."""
@@ -184,6 +189,15 @@ class GameState:
         # Clear season headlines
         self.news_generator.clear_season()
 
+        # Reset morale season stats
+        self.morale_manager.reset_season()
+
+        # Advance inbox to new season
+        self.inbox_manager.new_season()
+
+        # Process contracts
+        self.contract_manager.current_season += 1
+
         # Ensure all AI teams have 2 drivers
         if self.driver_market:
             self.driver_market.ensure_all_teams_have_drivers(self.player_team)
@@ -320,6 +334,82 @@ class GameState:
                 driver.tick_rising_star()
 
         return messages
+
+    def process_driver_morale(self, race_results: List[tuple]) -> List[str]:
+        """
+        Process driver morale changes after a race.
+        Returns list of morale messages.
+        """
+        messages = []
+
+        # Get player team results
+        player_results = {}
+        for driver, team, position in race_results:
+            if team == self.player_team:
+                player_results[driver.name] = position
+
+        # Find teammate positions
+        driver_names = list(player_results.keys())
+        if len(driver_names) >= 2:
+            for driver, team, position in race_results:
+                if team == self.player_team:
+                    # Find teammate position
+                    teammate_pos = 0
+                    for other_name, other_pos in player_results.items():
+                        if other_name != driver.name:
+                            teammate_pos = other_pos
+                            break
+
+                    was_dnf = position <= 0
+                    morale_msgs = self.morale_manager.process_race_result(
+                        driver, team, position, teammate_pos, was_dnf
+                    )
+                    messages.extend(morale_msgs)
+        elif len(driver_names) == 1:
+            for driver, team, position in race_results:
+                if team == self.player_team:
+                    was_dnf = position <= 0
+                    morale_msgs = self.morale_manager.process_race_result(
+                        driver, team, position, 0, was_dnf
+                    )
+                    messages.extend(morale_msgs)
+
+        return messages
+
+    def process_post_race_inbox(self, race_results: List[tuple]) -> None:
+        """Generate inbox messages after a race."""
+        # Get morale dict
+        morale_dict = {}
+        for driver in self.player_team.drivers:
+            dm = self.morale_manager.get_morale(driver.name)
+            morale_dict[driver.name] = dm.morale
+
+        # Get sponsor objective stats
+        sm = self.sponsor_manager
+        met = sm.objectives_met if hasattr(sm, 'objectives_met') else 0
+        total = sm.races_completed if hasattr(sm, 'races_completed') else 0
+
+        # Get expiring contracts
+        expiring = []
+        for driver in self.player_team.drivers:
+            contract = self.contract_manager.get_contract(driver.name)
+            if contract and contract.years_remaining <= 1:
+                expiring.append(driver.name)
+
+        # Get rivalries
+        active_rivalries = self.rivalry_manager.get_active_rivalries(40)
+        rivalry_list = [(r.driver1, r.driver2, r.intensity) for r in active_rivalries]
+
+        self.inbox_manager.generate_race_messages(
+            player_team=self.player_team,
+            all_teams=self.teams,
+            race_results=race_results,
+            driver_morale=morale_dict,
+            sponsor_objectives_met=met,
+            sponsor_objectives_total=total,
+            expiring_contracts=expiring,
+            active_rivalries=rivalry_list
+        )
 
     def get_player_constructor_position(self) -> int:
         """Get player's position in constructor standings."""
@@ -512,6 +602,13 @@ class Game:
                         self.state.player_team, selected_driver
                     )
                     if success:
+                        # Create contract for the driver
+                        self.state.contract_manager.create_contract(
+                            driver_name=selected_driver.name,
+                            team_name=self.state.player_team.name,
+                            salary=selected_driver.salary,
+                            years=2  # Initial 2-year contract
+                        )
                         self.menu.display_success(message)
                     else:
                         self.menu.display_error(message)
@@ -899,9 +996,53 @@ class Game:
         # Advance rivalry manager
         self.state.rivalry_manager.advance_race()
 
+        # Process driver morale
+        morale_messages = self.state.process_driver_morale(results)
+        if morale_messages:
+            print("\n" + "-" * 50)
+            print("  DRIVER MORALE")
+            print("-" * 50)
+            for msg in morale_messages:
+                print(f"  {msg}")
+            print("-" * 50)
+
+        # Process development progress
+        dev_messages = self.state.development_tree.advance_race(self.state.player_team.car)
+        if dev_messages:
+            print("\n" + "-" * 50)
+            print("  CAR DEVELOPMENT")
+            print("-" * 50)
+            for msg in dev_messages:
+                print(f"  {msg}")
+            print("-" * 50)
+
+        # Generate inbox messages for between races
+        self.state.process_post_race_inbox(results)
+
+        # Advance other managers
+        self.state.morale_manager.advance_race()
+        self.state.inbox_manager.advance_race()
+        self.state.contract_manager.advance_race()
+
+        # Check for expiring contracts
+        contract_alerts = self.state.contract_manager.check_expiring_contracts(self.state.player_team.name)
+        if contract_alerts:
+            print("\n" + "-" * 50)
+            print("  CONTRACT ALERTS")
+            print("-" * 50)
+            for alert in contract_alerts:
+                print(f"  {alert}")
+            print("-" * 50)
+
         # Show updated standings
         print(self.state.standings_manager.display_driver_standings())
         press_enter_to_continue()
+
+        # Show inbox notification if any
+        inbox_notif = self.state.inbox_manager.get_notification_summary()
+        if inbox_notif:
+            print(f"\n  {inbox_notif}")
+            press_enter_to_continue()
 
         # Advance to next race (pass results for AI income)
         ai_upgrade_messages = self.state.advance_race(results)
@@ -1118,31 +1259,72 @@ class Game:
             elif choice == '3':
                 self._driver_market()
             elif choice == '4':
-                self._upgrade_car()
+                self._car_development()
             elif choice == '5':
                 self._view_rival_teams()
             elif choice == '6':
                 self._manage_sponsors()
             elif choice == '7':
                 self._view_rivalries()
+            elif choice == '8':
+                self._view_inbox()
 
     def _view_my_drivers(self) -> None:
-        """View player's current drivers."""
+        """View player's current drivers with morale and contracts."""
         clear_screen()
         print(f"\n  {self.state.player_team.name} - DRIVERS")
-        print("=" * 50)
+        print("=" * 70)
 
         if not self.state.player_team.drivers:
             print("\n  No drivers signed!")
         else:
             for i, driver in enumerate(self.state.player_team.drivers, 1):
-                print(f"\n  Driver {i}: {driver}")
+                print(f"\n  {'='*60}")
+                print(f"  Driver {i}: {driver}")
+                print(f"  {'='*60}")
                 print(driver.get_stats_display())
                 print(f"  Season Points: {driver.season_points}")
-                print(f"  Salary: ${driver.salary}M/season")
 
-        print("=" * 50)
-        press_enter_to_continue()
+                # Contract info
+                contract = self.state.contract_manager.get_contract(driver.name)
+                if contract:
+                    num_one = " [#1 DRIVER]" if contract.is_number_one else ""
+                    print(f"\n  CONTRACT:{num_one}")
+                    print(f"    Salary: ${contract.salary}M/season")
+                    print(f"    Years Remaining: {contract.years_remaining}")
+                    if contract.is_negotiating:
+                        print(f"    STATUS: NEEDS NEGOTIATION!")
+                else:
+                    print(f"\n  CONTRACT: ${driver.salary}M/season")
+
+                # Morale info
+                morale = self.state.morale_manager.get_morale(driver.name)
+                morale_bar = "[" + "=" * (morale.morale // 5) + " " * (20 - morale.morale // 5) + "]"
+                print(f"\n  MORALE: {morale_bar} {morale.morale}/100 ({morale.level.value})")
+                print(f"  Confidence: {morale.confidence}/100")
+
+                # Streaks
+                streaks = []
+                if morale.win_streak > 0:
+                    streaks.append(f"Win streak: {morale.win_streak}")
+                if morale.podium_streak > 0:
+                    streaks.append(f"Podium streak: {morale.podium_streak}")
+                if morale.no_points_streak > 0:
+                    streaks.append(f"No points: {morale.no_points_streak}")
+                if morale.beaten_by_teammate_streak > 0:
+                    streaks.append(f"Behind teammate: {morale.beaten_by_teammate_streak}")
+                if streaks:
+                    print(f"  Streaks: {', '.join(streaks)}")
+
+        print("\n" + "=" * 70)
+        print("\n  Options:")
+        print("  [1] Negotiate Contract")
+        print("  [B] Back")
+
+        choice = input("\n  Choice: ").strip().lower()
+        if choice == '1':
+            self._negotiate_contracts()
+        # B or anything else goes back
 
     def _view_my_car(self) -> None:
         """View player's car stats."""
@@ -1350,6 +1532,209 @@ class Game:
             print("  or battle closely for position over multiple races.")
             print("\n" + "=" * 60)
             press_enter_to_continue()
+
+    def _view_inbox(self) -> None:
+        """View and read inbox messages."""
+        while True:
+            clear_screen()
+            print(self.state.inbox_manager.display_inbox())
+
+            print("\n  Enter message number to read, or B to go back:")
+            choice = input("  Choice: ").strip().lower()
+
+            if choice == 'b':
+                break
+
+            try:
+                num = int(choice)
+                if 0 < num <= len(self.state.inbox_manager.messages):
+                    msg_content = self.state.inbox_manager.display_message(num - 1)
+                    if msg_content:
+                        clear_screen()
+                        print(msg_content)
+                        press_enter_to_continue()
+            except ValueError:
+                pass
+
+    def _car_development(self) -> None:
+        """Manage car development tree."""
+        while True:
+            clear_screen()
+            car = self.state.player_team.car
+            budget = self.state.player_team.budget
+
+            # Show current progress
+            print(self.state.development_tree.get_progress_display())
+
+            # Show available developments
+            print(self.state.development_tree.display_available_developments(car, budget))
+
+            print("\n  Options:")
+            print("  [#] Start development (enter number)")
+            print("  [T] View full tech tree")
+            print("  [B] Back")
+
+            choice = input("\n  Choice: ").strip().lower()
+
+            if choice == 'b':
+                break
+            elif choice == 't':
+                clear_screen()
+                print(self.state.development_tree.display_development_tree(car, budget))
+                press_enter_to_continue()
+            else:
+                try:
+                    num = int(choice)
+                    available = self.state.development_tree.get_available_nodes()
+                    if 0 < num <= len(available):
+                        node = available[num - 1]
+                        cost = self.state.development_tree.get_scaling_cost(node, car)
+
+                        if MenuSystem.confirm_action(f"Start '{node.description}' for ${cost}M?"):
+                            success, message = self.state.development_tree.start_development(
+                                node.name, car, budget
+                            )
+                            if success:
+                                self.state.player_team.spend(cost)
+                                self.menu.display_success(message)
+                            else:
+                                self.menu.display_error(message)
+                except ValueError:
+                    pass
+
+    def _negotiate_contracts(self) -> None:
+        """Handle contract negotiations with drivers."""
+        # Find drivers needing negotiation
+        negotiating = []
+        for driver in self.state.player_team.drivers:
+            contract = self.state.contract_manager.get_contract(driver.name)
+            if contract and contract.is_negotiating:
+                negotiating.append((driver, contract))
+
+        if not negotiating:
+            clear_screen()
+            print("\n" + "=" * 60)
+            print("  CONTRACT NEGOTIATIONS")
+            print("=" * 60)
+            print("\n  No active contract negotiations.")
+            print("  Drivers will request negotiations when their contracts")
+            print("  are about to expire.")
+            print("=" * 60)
+            press_enter_to_continue()
+            return
+
+        # Show drivers needing negotiation
+        clear_screen()
+        print("\n" + "=" * 60)
+        print("  CONTRACT NEGOTIATIONS")
+        print("=" * 60)
+        print("\n  Drivers needing contract negotiation:")
+        for i, (driver, contract) in enumerate(negotiating, 1):
+            races_left = contract.negotiation_deadline - self.state.contract_manager.current_race
+            print(f"  [{i}] {driver.name} - {races_left} races to negotiate")
+        print("\n  [B] Back")
+
+        choice = input("\n  Select driver to negotiate with: ").strip().lower()
+
+        if choice == 'b':
+            return
+
+        try:
+            num = int(choice)
+            if 0 < num <= len(negotiating):
+                driver, contract = negotiating[num - 1]
+                self._do_contract_negotiation(driver, contract)
+        except ValueError:
+            pass
+
+    def _do_contract_negotiation(self, driver, contract) -> None:
+        """Execute contract negotiation with a specific driver."""
+        while True:
+            clear_screen()
+            print(self.state.contract_manager.get_negotiation_status(driver.name))
+            print(self.state.contract_manager.display_negotiation_offer_screen(
+                driver.name, self.state.player_team.budget
+            ))
+
+            print("\n  Make an offer:")
+
+            # Get salary offer
+            try:
+                print(f"\n  Their minimum salary demand: ${contract.demands[0].value}M" if contract.demands else "")
+                salary_input = input(f"  Offer salary (current: ${contract.salary}M): $").strip()
+                if salary_input.lower() == 'b':
+                    return
+                new_salary = int(salary_input)
+            except ValueError:
+                print("  Invalid salary. Please enter a number.")
+                press_enter_to_continue()
+                continue
+
+            # Get contract length
+            try:
+                years_input = input("  Contract length (1-3 years): ").strip()
+                years = int(years_input)
+                if years < 1 or years > 3:
+                    print("  Contract must be 1-3 years.")
+                    press_enter_to_continue()
+                    continue
+            except ValueError:
+                print("  Invalid years. Please enter 1, 2, or 3.")
+                press_enter_to_continue()
+                continue
+
+            # #1 status
+            num_one_input = input("  Grant #1 driver status? (y/n): ").strip().lower()
+            grant_num_one = num_one_input == 'y'
+
+            # Release clause
+            release_input = input("  Include release clause? (y/n): ").strip().lower()
+            include_release = release_input == 'y'
+            release_value = 0
+            if include_release:
+                try:
+                    release_value = int(input("  Release clause value ($M): ").strip())
+                except ValueError:
+                    release_value = new_salary * 3
+
+            # Make the offer
+            result = self.state.contract_manager.make_offer(
+                driver.name,
+                new_salary,
+                years,
+                grant_num_one,
+                include_release,
+                release_value
+            )
+
+            clear_screen()
+            print("\n" + "=" * 60)
+            print("  NEGOTIATION RESULT")
+            print("=" * 60)
+            for msg in result.messages:
+                print(f"  {msg}")
+            print("=" * 60)
+
+            if result.success:
+                # Update morale on successful negotiation
+                self.state.morale_manager.process_contract_event(
+                    driver.name, "new_contract", True
+                )
+                if grant_num_one:
+                    self.state.morale_manager.process_contract_event(
+                        driver.name, "number_one_status", True
+                    )
+                press_enter_to_continue()
+                return
+            else:
+                # Morale penalty for rejection
+                self.state.morale_manager.process_contract_event(
+                    driver.name, "new_contract", False
+                )
+                if MenuSystem.confirm_action("Try again with a different offer?"):
+                    continue
+                else:
+                    return
 
     def _manage_sponsors(self) -> None:
         """Manage team sponsors."""

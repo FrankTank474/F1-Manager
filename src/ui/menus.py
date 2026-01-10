@@ -103,18 +103,19 @@ class MenuSystem:
     ║                     TEAM MANAGEMENT                               ║
     ╠═══════════════════════════════════════════════════════════════════╣
     ║                                                                   ║
-    ║    [1] View My Drivers                                            ║
+    ║    [1] View My Drivers (Stats, Morale, Contracts)                 ║
     ║    [2] View My Car                                                ║
     ║    [3] Driver Market                                              ║
-    ║    [4] Upgrade Car                                                ║
+    ║    [4] Car Development                                            ║
     ║    [5] View Rival Teams                                           ║
     ║    [6] Sponsors                                                   ║
     ║    [7] Driver Rivalries                                           ║
+    ║    [8] Inbox                                                      ║
     ║    [B] Back to Main Menu                                          ║
     ║                                                                   ║
     ╚═══════════════════════════════════════════════════════════════════╝
         """)
-        return get_input("  Enter choice: ", ['1', '2', '3', '4', '5', '6', '7', 'b', 'B'])
+        return get_input("  Enter choice: ", ['1', '2', '3', '4', '5', '6', '7', '8', 'b', 'B'])
 
     @staticmethod
     def display_new_game_menu() -> str:

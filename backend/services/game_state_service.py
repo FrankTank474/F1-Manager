@@ -219,7 +219,7 @@ class Weather(Enum):
 class TireState:
     """Tire state with CLI performance curves."""
     BASE_PERFORMANCE = {"soft": 1.0, "medium": 0.75, "hard": 0.55, "intermediate": 0.65, "wet": 0.55}
-    DEGRADATION_RATES = {"soft": 3.0, "medium": 1.8, "hard": 1.0, "intermediate": 1.4, "wet": 1.2}
+    DEGRADATION_RATES = {"soft": 4.5, "medium": 2.8, "hard": 1.6, "intermediate": 2.0, "wet": 1.8}
 
     def __init__(self, compound: str):
         self.compound = compound
@@ -1745,6 +1745,14 @@ class MultiplayerGameState:
             self._build_final_qualifying_grid(is_for_sprint=False)
             self.phase = GamePhase.TIRE_SELECTION
             self.player_tire_selections = {pid: {} for pid in self.players}
+            # Set random weather for race start (20% light rain, 10% heavy rain)
+            weather_roll = random.random()
+            if weather_roll < 0.10:
+                self.weather = Weather.HEAVY_RAIN
+            elif weather_roll < 0.30:
+                self.weather = Weather.LIGHT_RAIN
+            else:
+                self.weather = Weather.DRY
         elif self.phase == GamePhase.SPRINT_SHOOTOUT_Q1:
             self.current_quali_session = "SHOOTOUT_Q2"
             self._run_qualifying_session("SHOOTOUT_Q2")
@@ -2162,7 +2170,8 @@ class MultiplayerGameState:
         self.race_finished = False
         self.race_events = []
         self.race_entries = []
-        self.weather = Weather.DRY
+        # Keep weather that was set during tire selection (don't reset to DRY)
+        self.last_weather = self.weather
         self.safety_car = False
         self.safety_car_laps = 0
 
@@ -2195,8 +2204,12 @@ class MultiplayerGameState:
                                 tire_compound = comp
                                 break
             else:
-                # AI tire strategy
-                if track["overtaking_difficulty"] >= 7:
+                # AI tire strategy - check weather first
+                if self.weather == Weather.HEAVY_RAIN:
+                    tire_compound = "wet"
+                elif self.weather == Weather.LIGHT_RAIN:
+                    tire_compound = "intermediate"
+                elif track["overtaking_difficulty"] >= 7:
                     tire_compound = "medium" if q["position"] <= 5 else "soft"
                 else:
                     if q["position"] <= 3:
@@ -3281,6 +3294,225 @@ class MultiplayerGameState:
             self.player_tire_selections = {}
 
         return True
+
+    def fast_forward_races(self, player_id: str, num_races: int) -> Dict:
+        """Quick simulate multiple races, returning summary of results."""
+        if self.phase not in [GamePhase.MAIN_MENU, GamePhase.RACE_RESULTS]:
+            return {"success": False, "error": "Can only fast forward from main menu or race results"}
+
+        # -1 means rest of season
+        if num_races == -1:
+            num_races = len(self._tracks) - self.current_race + 1
+
+        results_summary = []
+        starting_race = self.current_race
+
+        for _ in range(num_races):
+            if self.current_race > len(self._tracks):
+                break
+
+            race_result = self._quick_sim_single_race()
+            results_summary.append(race_result)
+
+            # Move to next race
+            self.current_race += 1
+
+        # Set final phase
+        if self.current_race > len(self._tracks):
+            self.phase = GamePhase.SEASON_END
+            self._end_season()
+        else:
+            self.phase = GamePhase.MAIN_MENU
+            self.qualifying_results = []
+            self.race_entries = []
+            self.race_events = []
+            self.player_tire_selections = {}
+
+        return {
+            "success": True,
+            "races_simulated": len(results_summary),
+            "results": results_summary,
+            "current_race": self.current_race,
+            "season_ended": self.phase == GamePhase.SEASON_END
+        }
+
+    def _quick_sim_single_race(self) -> Dict:
+        """Simulate a single race quickly for fast forward mode."""
+        track = self._tracks[self.current_race - 1]
+
+        # Generate weekend modifiers
+        self._generate_weekend_modifiers()
+
+        # Quick qualifying - simulate all sessions
+        self.q1_results = []
+        self.q2_results = []
+        self.q3_results = []
+        self.eliminated_q1 = []
+        self.eliminated_q2 = []
+        self.q2_tire_choices = {}
+
+        self._run_qualifying_session("Q1")
+        self._run_qualifying_session("Q2")
+        self._run_qualifying_session("Q3")
+        self._build_final_qualifying_grid(is_for_sprint=False)
+
+        # Set random weather
+        weather_roll = random.random()
+        if weather_roll < 0.10:
+            self.weather = Weather.HEAVY_RAIN
+        elif weather_roll < 0.30:
+            self.weather = Weather.LIGHT_RAIN
+        else:
+            self.weather = Weather.DRY
+
+        # Setup race entries
+        self.race_entries = []
+        self.race_events = []
+        self.total_laps = track["laps"]
+        self.current_lap = 0
+        self.race_finished = False
+        self.safety_car = False
+        self.safety_car_laps = 0
+
+        for q in self.qualifying_results:
+            driver = next((d for d in self._all_drivers if d["name"] == q["driver_name"]), None)
+            if not driver:
+                for team in self.player_teams.values():
+                    driver = next((d for d in team["drivers"] if d["name"] == q["driver_name"]), None)
+                    if driver:
+                        break
+            if not driver:
+                continue
+
+            car = self._get_car_for_driver(driver)
+
+            # AI tire selection for everyone in fast forward
+            if self.weather == Weather.HEAVY_RAIN:
+                tire_compound = "wet"
+            elif self.weather == Weather.LIGHT_RAIN:
+                tire_compound = "intermediate"
+            elif track["overtaking_difficulty"] >= 7:
+                tire_compound = "medium" if q["position"] <= 5 else "soft"
+            else:
+                if q["position"] <= 3:
+                    tire_compound = "medium"
+                elif q["position"] <= 10:
+                    tire_compound = random.choice(["soft", "medium"])
+                else:
+                    tire_compound = "soft"
+
+            modifiers = self._weekend_modifiers.get(driver["name"], {})
+
+            self.race_entries.append({
+                "position": q["position"],
+                "driver": driver,
+                "driver_name": driver["name"],
+                "team_name": q["team_name"],
+                "car": car,
+                "tire": TireState(tire_compound),
+                "total_time": 0.0,
+                "gap": "Leader" if q["position"] == 1 else f"+{q['position'] * 0.5:.1f}s",
+                "pit_stops": 0,
+                "status": "racing",
+                "is_player_driver": q.get("is_player_driver", False),
+                "player_id": q.get("player_id"),
+                "weekend_form": modifiers.get("weekend_form", 0),
+                "mechanical_issue": modifiers.get("mechanical_issue", False),
+                "dnf": False,
+                "dnf_reason": ""
+            })
+
+        # Simulate race start
+        self._simulate_race_start()
+
+        # Simulate all laps
+        while self.current_lap < self.total_laps:
+            self._simulate_lap_internal()
+
+        # Process results
+        self._process_race_results()
+
+        # Get player results
+        player_results = []
+        for pid, team in self.player_teams.items():
+            for driver in team["drivers"]:
+                entry = next((e for e in self.race_entries if e["driver_name"] == driver["name"]), None)
+                if entry:
+                    final_pos = next((i+1 for i, e in enumerate(sorted(
+                        [e for e in self.race_entries if not e["dnf"]], key=lambda x: x["total_time"]
+                    )) if e["driver_name"] == driver["name"]), None)
+                    if entry["dnf"]:
+                        final_pos = "DNF"
+                    player_results.append({
+                        "driver": driver["name"],
+                        "position": final_pos,
+                        "points": POINTS_SYSTEM.get(final_pos, 0) if isinstance(final_pos, int) else 0
+                    })
+
+        return {
+            "race_number": self.current_race,
+            "track": track["name"],
+            "weather": self.weather.value,
+            "player_results": player_results
+        }
+
+    def _simulate_lap_internal(self):
+        """Internal lap simulation for fast forward mode."""
+        self.current_lap += 1
+        track = self._tracks[self.current_race - 1]
+
+        # Weather changes
+        if random.random() < 0.02:
+            if self.weather == Weather.DRY:
+                self.weather = Weather.LIGHT_RAIN
+            elif self.weather == Weather.LIGHT_RAIN:
+                if random.random() < 0.4:
+                    self.weather = Weather.HEAVY_RAIN
+                else:
+                    self.weather = Weather.DRY
+
+        # Safety car countdown
+        if self.safety_car:
+            self.safety_car_laps -= 1
+            if self.safety_car_laps <= 0:
+                self.safety_car = False
+
+        for entry in self.race_entries:
+            if entry["dnf"]:
+                continue
+
+            # DNF check
+            reliability_base = 0.005
+            car = entry["car"]
+            reliability_factor = (100 - car.get("reliability", 70)) / 100
+            if entry.get("mechanical_issue"):
+                reliability_factor *= 2
+            dnf_chance = reliability_base * reliability_factor
+            if random.random() < dnf_chance:
+                entry["dnf"] = True
+                entry["status"] = "dnf"
+                continue
+
+            lap_time = self._calculate_lap_time(entry, self.weather)
+            if self.safety_car:
+                lap_time = track["base_lap_time"] + 10
+            entry["total_time"] += lap_time
+
+            # Tire degradation
+            base_deg = entry["tire"].DEGRADATION_RATES.get(entry["tire"].compound, 1.8) * track["tire_degradation"]
+            car_cooling = max(0.4, 1.5 - (entry["car"]["tire_cooling"] / 100))
+            tire_mgmt = max(0.4, 1.0 - (entry["driver"]["stats"]["tire_management"] / 166.67))
+            final_deg = base_deg * car_cooling * tire_mgmt
+            entry["tire"].wear = min(100, entry["tire"].wear + final_deg)
+
+        # AI pit stops
+        self._simulate_ai_pits()
+
+        # Update positions
+        active = [e for e in self.race_entries if not e["dnf"]]
+        active.sort(key=lambda x: x["total_time"])
+        for i, entry in enumerate(active):
+            entry["position"] = i + 1
 
     def _end_season(self):
         """End of season processing."""

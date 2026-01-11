@@ -496,6 +496,29 @@ async def advance_to_next_race(
     return game_state.get_state_response(user_id)
 
 
+@router.post("/{game_id}/fast-forward")
+async def fast_forward_races(
+    game_id: str,
+    num_races: int = 1,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Fast forward through multiple races (3, 5, 10, or -1 for rest of season)."""
+    game_state = await get_game_state(game_id, user_id)
+
+    if game_state.phase not in [GamePhase.MAIN_MENU, GamePhase.RACE_RESULTS]:
+        raise HTTPException(status_code=400, detail="Can only fast forward from main menu or race results")
+
+    result = game_state.fast_forward_races(user_id, num_races)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Fast forward failed"))
+
+    await save_game_state(game_id)
+    return {
+        "state": game_state.get_state_response(user_id),
+        "fast_forward_results": result
+    }
+
+
 # ==================== INBOX ====================
 
 @router.post("/{game_id}/mark-message-read", response_model=GameStateResponse)

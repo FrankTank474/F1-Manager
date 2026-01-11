@@ -805,6 +805,20 @@ function renderMainMenu(container, state) {
                                 <span class="nav-label">Other Teams</span>
                             </button>
                         </div>
+
+                        <!-- Fast Forward Section -->
+                        ${!isMultiplayer ? `
+                            <div class="hub-section fast-forward-section">
+                                <h3 class="hub-section-title">Fast Forward</h3>
+                                <p class="text-secondary text-sm mb-md">Quick sim races (AI controls your team)</p>
+                                <div class="fast-forward-btns">
+                                    <button class="btn btn-secondary btn-sm fast-forward-btn" data-races="3">3 Races</button>
+                                    <button class="btn btn-secondary btn-sm fast-forward-btn" data-races="5">5 Races</button>
+                                    <button class="btn btn-secondary btn-sm fast-forward-btn" data-races="10">10 Races</button>
+                                    <button class="btn btn-secondary btn-sm fast-forward-btn" data-races="-1">Full Season</button>
+                                </div>
+                            </div>
+                        ` : ''}
                     </div>
                 </div>
             </div>
@@ -842,10 +856,95 @@ function renderMainMenu(container, state) {
     document.getElementById('calendar-btn')?.addEventListener('click', () => renderCalendarScreen(container, state));
     document.getElementById('rivals-btn')?.addEventListener('click', () => renderOtherTeamsScreen(container, state));
 
+    // Fast forward buttons
+    document.querySelectorAll('.fast-forward-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const numRaces = parseInt(btn.dataset.races);
+            const racesText = numRaces === -1 ? 'the rest of the season' : `${numRaces} races`;
+            if (!confirm(`Fast forward ${racesText}? AI will control your team during these races.`)) {
+                return;
+            }
+            setButtonLoading(btn, true);
+            try {
+                const response = await api.post(`/gameplay/${state.game_id}/fast-forward?num_races=${numRaces}`);
+                // Show fast forward results
+                renderFastForwardResults(container, response.state, response.fast_forward_results);
+            } catch (error) {
+                showAlert(container.querySelector('.hub-content'), error.message, 'error');
+                setButtonLoading(btn, false);
+            }
+        });
+    });
+
     // Auto-refresh in multiplayer when ready (to detect when other player advances phase)
     if (isMultiplayer && imReady) {
         startRefreshInterval(state.game_id, container);
     }
+}
+
+/**
+ * Fast Forward Results Screen
+ */
+function renderFastForwardResults(container, state, ffResults) {
+    const results = ffResults.results || [];
+    const seasonEnded = ffResults.season_ended;
+
+    // Calculate totals
+    let totalPoints = 0;
+    results.forEach(race => {
+        race.player_results.forEach(r => {
+            totalPoints += r.points || 0;
+        });
+    });
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <h1>Fast Forward Complete</h1>
+                <p class="text-secondary">${results.length} race${results.length !== 1 ? 's' : ''} simulated</p>
+            </div>
+
+            <div class="game-content">
+                <div class="ff-summary card mb-lg">
+                    <h3>Summary</h3>
+                    <p>Total Points Earned: <strong>${totalPoints}</strong></p>
+                    ${seasonEnded ? '<p class="text-warning">Season has ended!</p>' : ''}
+                </div>
+
+                <div class="ff-results">
+                    <h3 class="mb-md">Race Results</h3>
+                    <div class="ff-results-grid">
+                        ${results.map(race => `
+                            <div class="card ff-race-card">
+                                <div class="ff-race-header">
+                                    <span class="ff-race-num">R${race.race_number}</span>
+                                    <span class="ff-track">${escapeHtml(race.track)}</span>
+                                    <span class="ff-weather">${race.weather === 'heavy_rain' ? '⛈️' : race.weather === 'light_rain' ? '🌧️' : '☀️'}</span>
+                                </div>
+                                <div class="ff-race-results">
+                                    ${race.player_results.map(r => `
+                                        <div class="ff-driver-result">
+                                            <span class="ff-driver-name">${escapeHtml(r.driver)}</span>
+                                            <span class="ff-position ${r.position === 'DNF' ? 'dnf' : r.position <= 3 ? 'podium' : ''}">${r.position === 'DNF' ? 'DNF' : 'P' + r.position}</span>
+                                            <span class="ff-points">${r.points > 0 ? '+' + r.points + ' pts' : ''}</span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+
+                <button class="btn btn-primary btn-lg btn-block mt-xl" id="continue-btn">
+                    ${seasonEnded ? 'View Season End' : 'Continue'}
+                </button>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('continue-btn')?.addEventListener('click', () => {
+        renderGameScreen(container, state);
+    });
 }
 
 function getCountryFlag(country) {
@@ -2079,21 +2178,34 @@ function renderTireSelection(container, state) {
                                 <p class="text-secondary">Grid Position: ${getDriverQualifyingPosition(state, driver.name)}</p>
 
                                 <div class="tire-options mt-lg">
-                                    <button class="tire-btn tire-soft selected" data-compound="soft">
-                                        <span class="tire-icon">S</span>
-                                        <span class="tire-name">Soft</span>
-                                        <span class="tire-desc">Fast but wears quickly</span>
-                                    </button>
-                                    <button class="tire-btn tire-medium" data-compound="medium">
-                                        <span class="tire-icon">M</span>
-                                        <span class="tire-name">Medium</span>
-                                        <span class="tire-desc">Balanced performance</span>
-                                    </button>
-                                    <button class="tire-btn tire-hard" data-compound="hard">
-                                        <span class="tire-icon">H</span>
-                                        <span class="tire-name">Hard</span>
-                                        <span class="tire-desc">Durable but slower</span>
-                                    </button>
+                                    ${isWet ? `
+                                        <button class="tire-btn tire-intermediate ${weather === 'light_rain' ? 'selected' : ''}" data-compound="intermediate">
+                                            <span class="tire-icon">I</span>
+                                            <span class="tire-name">Intermediate</span>
+                                            <span class="tire-desc">Light rain conditions</span>
+                                        </button>
+                                        <button class="tire-btn tire-wet ${weather === 'heavy_rain' ? 'selected' : ''}" data-compound="wet">
+                                            <span class="tire-icon">W</span>
+                                            <span class="tire-name">Wet</span>
+                                            <span class="tire-desc">Heavy rain conditions</span>
+                                        </button>
+                                    ` : `
+                                        <button class="tire-btn tire-soft selected" data-compound="soft">
+                                            <span class="tire-icon">S</span>
+                                            <span class="tire-name">Soft</span>
+                                            <span class="tire-desc">Fast but wears quickly</span>
+                                        </button>
+                                        <button class="tire-btn tire-medium" data-compound="medium">
+                                            <span class="tire-icon">M</span>
+                                            <span class="tire-name">Medium</span>
+                                            <span class="tire-desc">Balanced performance</span>
+                                        </button>
+                                        <button class="tire-btn tire-hard" data-compound="hard">
+                                            <span class="tire-icon">H</span>
+                                            <span class="tire-name">Hard</span>
+                                            <span class="tire-desc">Durable but slower</span>
+                                        </button>
+                                    `}
                                 </div>
                             </div>
                         `).join('')}

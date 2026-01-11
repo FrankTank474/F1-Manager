@@ -2716,3 +2716,129 @@
     letter-spacing: 1px;
     margin-bottom: var(--space-sm);
 }
+
+/* ==================== FAST FORWARD ==================== */
+
+.fast-forward-section {
+    margin-top: var(--space-lg);
+    padding: var(--space-md);
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    border: 1px dashed var(--border-color);
+}
+
+.fast-forward-btns {
+    display: flex;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.fast-forward-btn {
+    flex: 1;
+    min-width: 80px;
+}
+
+/* Fast Forward Results */
+.ff-summary {
+    text-align: center;
+}
+
+.ff-results-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: var(--space-md);
+}
+
+.ff-race-card {
+    padding: var(--space-md);
+}
+
+.ff-race-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+    padding-bottom: var(--space-sm);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.ff-race-num {
+    background: var(--accent-color);
+    color: white;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    font-size: var(--font-xs);
+}
+
+.ff-track {
+    flex: 1;
+    font-weight: 500;
+}
+
+.ff-weather {
+    font-size: 1.2em;
+}
+
+.ff-driver-result {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-xs) 0;
+}
+
+.ff-driver-name {
+    flex: 1;
+}
+
+.ff-position {
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+}
+
+.ff-position.podium {
+    background: linear-gradient(135deg, #f1c40f, #e67e22);
+    color: #000;
+}
+
+.ff-position.dnf {
+    background: var(--danger-color);
+    color: white;
+}
+
+.ff-points {
+    color: var(--success-color);
+    font-weight: 500;
+    min-width: 60px;
+    text-align: right;
+}
+
+/* Wet tire styles */
+.tire-btn.tire-intermediate {
+    background: linear-gradient(135deg, #27ae60, #2ecc71);
+    border-color: #27ae60;
+}
+
+.tire-btn.tire-intermediate.selected {
+    box-shadow: 0 0 0 3px rgba(39, 174, 96, 0.3);
+}
+
+.tire-btn.tire-wet {
+    background: linear-gradient(135deg, #2980b9, #3498db);
+    border-color: #2980b9;
+}
+
+.tire-btn.tire-wet.selected {
+    box-shadow: 0 0 0 3px rgba(41, 128, 185, 0.3);
+}
+
+.rain-warning {
+    animation: pulse-rain 2s infinite;
+}
+
+@keyframes pulse-rain {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}

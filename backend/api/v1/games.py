@@ -8,6 +8,7 @@ from ...models.game import (
 from ...models.auth import MessageResponse
 from ...models.user import User
 from ...services.game_service import GameService
+from ...services.game_state_service import game_state_manager
 from ...dependencies import get_game_service, get_current_user_id, get_user_service
 
 router = APIRouter(prefix="/games", tags=["games"])
@@ -163,6 +164,11 @@ async def stop_game(
 ):
     """Stop a game (sets to inactive, can be resumed later)."""
     try:
+        # Mark game state as stopped so other player gets notified
+        game_state = game_state_manager.get_game(game_id)
+        if game_state:
+            game_state.stop_game(user_id)
+
         return await game_service.stop_game(game_id, user_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

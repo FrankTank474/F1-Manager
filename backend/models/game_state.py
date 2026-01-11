@@ -491,6 +491,10 @@ class GameStateResponse(BaseModel):
     # Messages/notifications
     notifications: List[str] = []
 
+    # Game stopped flag (for multiplayer sync - redirect to lobby)
+    game_stopped: bool = False
+    stopped_by: Optional[str] = None  # Username of player who stopped
+
 
 # ==================== REQUEST MODELS ====================
 

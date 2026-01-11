@@ -329,6 +329,18 @@ class MultiplayerGameState:
         # Available sponsors for selection
         self.available_sponsors: Dict[str, List[Dict]] = {}
 
+        # Game stopped flag for multiplayer sync
+        self.game_stopped = False
+        self.stopped_by: Optional[str] = None  # Username who stopped
+
+    def stop_game(self, player_id: str) -> bool:
+        """Stop the game and notify all players."""
+        if player_id not in self.players:
+            return False
+        self.game_stopped = True
+        self.stopped_by = self.players[player_id].get("username", "Unknown")
+        return True
+
     def _initialize_drivers(self):
         """Load all drivers from data files."""
         all_data = F1_DRIVERS + F2_DRIVERS
@@ -2455,7 +2467,9 @@ class MultiplayerGameState:
             development_tree=dev_tree,
             inbox=inbox if inbox else None,
             min_driver_cost=min_cost,
-            drivers_needed=drivers_needed
+            drivers_needed=drivers_needed,
+            game_stopped=self.game_stopped,
+            stopped_by=self.stopped_by
         )
 
     def _build_team_info(self, team_data: Dict) -> TeamInfo:

@@ -92,6 +92,15 @@ function startRefreshInterval(gameId, container) {
     refreshInterval = setInterval(async () => {
         try {
             const state = await api.get(`/gameplay/${gameId}/state`);
+
+            // Check if game was stopped by another player
+            if (state.game_stopped) {
+                stopRefreshInterval();
+                alert(`Game stopped by ${state.stopped_by || 'another player'}. Returning to lobby.`);
+                window.location.hash = '#/games';
+                return;
+            }
+
             if (state.phase !== currentGameState?.phase ||
                 JSON.stringify(state.players) !== JSON.stringify(currentGameState?.players) ||
                 state.turn_info?.current_player_id !== currentGameState?.turn_info?.current_player_id) {
@@ -137,6 +146,13 @@ function renderGameScreen(container, state) {
     currentGameState = state;
     currentContainer = container;
     stopRefreshInterval();
+
+    // Check if game was stopped
+    if (state.game_stopped) {
+        alert(`Game stopped by ${state.stopped_by || 'another player'}. Returning to lobby.`);
+        window.location.hash = '#/games';
+        return;
+    }
 
     // Render screen based on phase
     switch (state.phase) {

@@ -165,9 +165,10 @@ async def stop_game(
     """Stop a game (sets to inactive, can be resumed later)."""
     try:
         # Mark game state as stopped so other player gets notified
-        game_state = game_state_manager.get_game(game_id)
+        game_state = await game_state_manager.load_game(game_id)
         if game_state:
             game_state.stop_game(user_id)
+            await game_state_manager.save_game(game_id)
 
         return await game_service.stop_game(game_id, user_id)
     except ValueError as e:

@@ -19,10 +19,12 @@ class LocalJSONDatastore(DatastoreInterface):
         self.tokens_file = data_dir / "blacklisted_tokens.json"
         self.games_file = data_dir / "games.json"
         self.invites_file = data_dir / "invites.json"
+        self.game_states_file = data_dir / "game_states.json"
         self._users: Dict[str, Dict[str, Any]] = {}
         self._tokens: Dict[str, str] = {}  # jti -> expires_at ISO string
         self._games: Dict[str, Dict[str, Any]] = {}
         self._invites: Dict[str, Dict[str, Any]] = {}
+        self._game_states: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:
@@ -49,6 +51,9 @@ class LocalJSONDatastore(DatastoreInterface):
         if self.invites_file.exists():
             with open(self.invites_file, "r") as f:
                 self._invites = json.load(f)
+        if self.game_states_file.exists():
+            with open(self.game_states_file, "r") as f:
+                self._game_states = json.load(f)
 
     async def _save_users(self) -> None:
         """Save users to JSON file."""
@@ -73,6 +78,12 @@ class LocalJSONDatastore(DatastoreInterface):
         async with self._lock:
             with open(self.invites_file, "w") as f:
                 json.dump(self._invites, f, indent=2, default=str)
+
+    async def _save_game_states(self) -> None:
+        """Save game states to JSON file."""
+        async with self._lock:
+            with open(self.game_states_file, "w") as f:
+                json.dump(self._game_states, f, indent=2, default=str)
 
     async def create_user(self, email: str, username: str, password_hash: str) -> User:
         """Create a new user."""
@@ -451,3 +462,21 @@ class LocalJSONDatastore(DatastoreInterface):
                 else None
             ),
         )
+
+    # Game state persistence
+    async def save_game_state(self, game_id: str, state_data: dict) -> None:
+        """Save game state data as JSON."""
+        self._game_states[game_id] = state_data
+        await self._save_game_states()
+
+    async def load_game_state(self, game_id: str) -> Optional[dict]:
+        """Load game state data. Returns None if not found."""
+        return self._game_states.get(game_id)
+
+    async def delete_game_state(self, game_id: str) -> bool:
+        """Delete game state data."""
+        if game_id in self._game_states:
+            del self._game_states[game_id]
+            await self._save_game_states()
+            return True
+        return False

@@ -479,6 +479,124 @@ class MultiplayerGameState:
         # Race time tracking for gap calculation
         self.race_times: Dict[str, float] = {}  # driver_name -> total race time in seconds
 
+    def to_dict(self) -> dict:
+        """Serialize game state to a dictionary for persistence."""
+        return {
+            "game_id": self.game_id,
+            "phase": self.phase.value,
+            "current_season": self.current_season,
+            "current_race": self.current_race,
+            "total_races": self.total_races,
+            "players": self.players,
+            "player_order": self.player_order,
+            "current_turn_index": self.current_turn_index,
+            "players_ready": self.players_ready,
+            "player_teams": self.player_teams,
+            "_all_drivers": self._all_drivers,
+            "_ai_teams": self._ai_teams,
+            "_tracks": self._tracks,
+            "qualifying_results": self.qualifying_results,
+            "race_entries": self.race_entries,
+            "race_events": self.race_events,
+            "current_lap": self.current_lap,
+            "total_laps": self.total_laps,
+            "race_finished": self.race_finished,
+            "weather": self.weather.value,
+            "last_weather": self.last_weather.value,
+            "safety_car": self.safety_car,
+            "safety_car_laps": self.safety_car_laps,
+            "player_tire_selections": self.player_tire_selections,
+            "pit_decisions_needed": self.pit_decisions_needed,
+            "pit_decisions_confirmed": self.pit_decisions_confirmed,
+            "race_paused_for_pits": self.race_paused_for_pits,
+            "q1_results": self.q1_results,
+            "q2_results": self.q2_results,
+            "q3_results": self.q3_results,
+            "eliminated_q1": self.eliminated_q1,
+            "eliminated_q2": self.eliminated_q2,
+            "q2_tire_choices": self.q2_tire_choices,
+            "current_quali_session": self.current_quali_session,
+            "is_sprint_weekend": self.is_sprint_weekend,
+            "sprint_results": self.sprint_results,
+            "sprint_entries": self.sprint_entries,
+            "sprint_events": self.sprint_events,
+            "sprint_current_lap": self.sprint_current_lap,
+            "sprint_total_laps": self.sprint_total_laps,
+            "sprint_finished": self.sprint_finished,
+            "sprint_qualifying_results": self.sprint_qualifying_results,
+            "main_race_qualifying_results": self.main_race_qualifying_results,
+            "_weekend_modifiers": self._weekend_modifiers,
+            "_driver_standings": self._driver_standings,
+            "_constructor_standings": self._constructor_standings,
+            "inboxes": self.inboxes,
+            "available_sponsors": self.available_sponsors,
+            "game_stopped": self.game_stopped,
+            "stopped_by": self.stopped_by,
+            "news_headlines": self.news_headlines,
+            "ai_team_upgrades": self.ai_team_upgrades,
+            "reserve_drivers": self.reserve_drivers,
+            "race_times": self.race_times,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "MultiplayerGameState":
+        """Deserialize game state from a dictionary."""
+        game = cls(data["game_id"])
+        game.phase = GamePhase(data["phase"])
+        game.current_season = data["current_season"]
+        game.current_race = data["current_race"]
+        game.total_races = data["total_races"]
+        game.players = data["players"]
+        game.player_order = data["player_order"]
+        game.current_turn_index = data["current_turn_index"]
+        game.players_ready = data["players_ready"]
+        game.player_teams = data["player_teams"]
+        game._all_drivers = data["_all_drivers"]
+        game._ai_teams = data["_ai_teams"]
+        game._tracks = data["_tracks"]
+        game.qualifying_results = data["qualifying_results"]
+        game.race_entries = data["race_entries"]
+        game.race_events = data["race_events"]
+        game.current_lap = data["current_lap"]
+        game.total_laps = data["total_laps"]
+        game.race_finished = data["race_finished"]
+        game.weather = Weather(data["weather"])
+        game.last_weather = Weather(data["last_weather"])
+        game.safety_car = data["safety_car"]
+        game.safety_car_laps = data["safety_car_laps"]
+        game.player_tire_selections = data["player_tire_selections"]
+        game.pit_decisions_needed = data["pit_decisions_needed"]
+        game.pit_decisions_confirmed = data["pit_decisions_confirmed"]
+        game.race_paused_for_pits = data["race_paused_for_pits"]
+        game.q1_results = data["q1_results"]
+        game.q2_results = data["q2_results"]
+        game.q3_results = data["q3_results"]
+        game.eliminated_q1 = data["eliminated_q1"]
+        game.eliminated_q2 = data["eliminated_q2"]
+        game.q2_tire_choices = data["q2_tire_choices"]
+        game.current_quali_session = data["current_quali_session"]
+        game.is_sprint_weekend = data["is_sprint_weekend"]
+        game.sprint_results = data["sprint_results"]
+        game.sprint_entries = data["sprint_entries"]
+        game.sprint_events = data["sprint_events"]
+        game.sprint_current_lap = data["sprint_current_lap"]
+        game.sprint_total_laps = data["sprint_total_laps"]
+        game.sprint_finished = data["sprint_finished"]
+        game.sprint_qualifying_results = data["sprint_qualifying_results"]
+        game.main_race_qualifying_results = data["main_race_qualifying_results"]
+        game._weekend_modifiers = data["_weekend_modifiers"]
+        game._driver_standings = data["_driver_standings"]
+        game._constructor_standings = data["_constructor_standings"]
+        game.inboxes = data["inboxes"]
+        game.available_sponsors = data["available_sponsors"]
+        game.game_stopped = data["game_stopped"]
+        game.stopped_by = data["stopped_by"]
+        game.news_headlines = data["news_headlines"]
+        game.ai_team_upgrades = data["ai_team_upgrades"]
+        game.reserve_drivers = data["reserve_drivers"]
+        game.race_times = data["race_times"]
+        return game
+
     def stop_game(self, player_id: str) -> bool:
         """Stop the game and notify all players."""
         if player_id not in self.players:
@@ -3976,10 +4094,15 @@ class MultiplayerGameState:
 # ==================== GAME STATE MANAGER ====================
 
 class GameStateManager:
-    """Manages all active multiplayer game states."""
+    """Manages all active multiplayer game states with persistence."""
 
     def __init__(self):
-        self._games: Dict[str, MultiplayerGameState] = {}
+        self._games: Dict[str, MultiplayerGameState] = {}  # In-memory cache
+        self._datastore = None  # Will be set after app startup
+
+    def set_datastore(self, datastore) -> None:
+        """Set the datastore for persistence."""
+        self._datastore = datastore
 
     def create_game(self, game_id: str, player_id: str = None, username: str = None) -> MultiplayerGameState:
         """Create a new game state and optionally add the first player."""
@@ -3990,15 +4113,44 @@ class GameStateManager:
         return game
 
     def get_game(self, game_id: str) -> Optional[MultiplayerGameState]:
-        """Get an existing game state."""
+        """Get an existing game state from memory cache."""
         return self._games.get(game_id)
 
+    async def load_game(self, game_id: str) -> Optional[MultiplayerGameState]:
+        """Load game state from datastore if not in memory."""
+        # Check memory cache first
+        if game_id in self._games:
+            return self._games[game_id]
+
+        # Try to load from datastore
+        if self._datastore:
+            state_data = await self._datastore.load_game_state(game_id)
+            if state_data:
+                game = MultiplayerGameState.from_dict(state_data)
+                self._games[game_id] = game
+                return game
+
+        return None
+
+    async def save_game(self, game_id: str) -> None:
+        """Persist game state to datastore."""
+        if self._datastore and game_id in self._games:
+            game = self._games[game_id]
+            await self._datastore.save_game_state(game_id, game.to_dict())
+
     def delete_game(self, game_id: str) -> bool:
-        """Delete a game state."""
+        """Delete a game state from memory."""
         if game_id in self._games:
             del self._games[game_id]
             return True
         return False
+
+    async def delete_game_persistent(self, game_id: str) -> bool:
+        """Delete a game state from memory and datastore."""
+        self.delete_game(game_id)
+        if self._datastore:
+            await self._datastore.delete_game_state(game_id)
+        return True
 
     def add_player_to_game(self, game_id: str, player_id: str, username: str) -> Optional[MultiplayerGameState]:
         """Add a player to a game, creating it if needed."""

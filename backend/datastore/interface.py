@@ -132,3 +132,19 @@ class DatastoreInterface(ABC):
     async def search_users_by_username(self, query: str, exclude_user_id: str, limit: int = 10) -> List[User]:
         """Search users by username prefix for invite suggestions."""
         pass
+
+    # Game state persistence
+    @abstractmethod
+    async def save_game_state(self, game_id: str, state_data: dict) -> None:
+        """Save game state data as JSON."""
+        pass
+
+    @abstractmethod
+    async def load_game_state(self, game_id: str) -> Optional[dict]:
+        """Load game state data. Returns None if not found."""
+        pass
+
+    @abstractmethod
+    async def delete_game_state(self, game_id: str) -> bool:
+        """Delete game state data."""
+        pass

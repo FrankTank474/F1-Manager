@@ -16,9 +16,10 @@ from ...dependencies import get_current_user_id, get_game_service
 router = APIRouter(prefix="/gameplay", tags=["gameplay"])
 
 
-def get_game_state(game_id: str, user_id: str) -> MultiplayerGameState:
+async def get_game_state(game_id: str, user_id: str) -> MultiplayerGameState:
     """Get game state and verify access."""
-    game_state = game_state_manager.get_game(game_id)
+    # Try to load from memory or datastore
+    game_state = await game_state_manager.load_game(game_id)
     if not game_state:
         raise HTTPException(status_code=404, detail="Game session not found")
 
@@ -27,6 +28,11 @@ def get_game_state(game_id: str, user_id: str) -> MultiplayerGameState:
         raise HTTPException(status_code=403, detail="Not authorized for this game")
 
     return game_state
+
+
+async def save_game_state(game_id: str) -> None:
+    """Save game state after modifications."""
+    await game_state_manager.save_game(game_id)
 
 
 @router.post("/{game_id}/start", response_model=GameStateResponse)
@@ -58,8 +64,8 @@ async def start_game_session(
         # Ignore errors like "already active" - we just want to make sure it's playable
         pass
 
-    # Check if game state already exists
-    game_state = game_state_manager.get_game(game_id)
+    # Check if game state already exists (try memory then datastore)
+    game_state = await game_state_manager.load_game(game_id)
     if not game_state:
         # Create new multiplayer game state
         game_state = game_state_manager.create_game(game_id, user_id, player.username)
@@ -68,6 +74,8 @@ async def start_game_session(
         if not game_state.is_player(user_id):
             game_state.add_player(user_id, player.username)
 
+    # Save game state to datastore
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -77,7 +85,7 @@ async def get_current_state(
     user_id: str = Depends(get_current_user_id),
 ):
     """Get current game state."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
     return game_state.get_state_response(user_id)
 
 
@@ -90,7 +98,7 @@ async def set_team_name(
     user_id: str = Depends(get_current_user_id),
 ):
     """Set the team name for the player."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.TEAM_NAME_SELECTION:
         raise HTTPException(status_code=400, detail="Not in team name selection phase")
@@ -99,6 +107,7 @@ async def set_team_name(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to set team name. Name must be 3-30 characters.")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -111,7 +120,7 @@ async def select_sponsor(
     user_id: str = Depends(get_current_user_id),
 ):
     """Select a sponsor for the player's team."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.SPONSOR_SELECTION:
         raise HTTPException(status_code=400, detail="Not in sponsor selection phase")
@@ -120,6 +129,7 @@ async def select_sponsor(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to select sponsor")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -132,7 +142,7 @@ async def sign_driver(
     user_id: str = Depends(get_current_user_id),
 ):
     """Sign a driver to the player's team."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.TEAM_SETUP:
         raise HTTPException(status_code=400, detail="Cannot sign drivers in current phase")
@@ -148,6 +158,7 @@ async def sign_driver(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to sign driver - not your turn or driver unavailable")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -158,7 +169,7 @@ async def release_driver(
     user_id: str = Depends(get_current_user_id),
 ):
     """Release a driver from the player's team."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.MAIN_MENU:
         raise HTTPException(status_code=400, detail="Can only release drivers in main menu")
@@ -167,6 +178,7 @@ async def release_driver(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to release driver")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -179,7 +191,7 @@ async def upgrade_car(
     user_id: str = Depends(get_current_user_id),
 ):
     """Upgrade a car stat."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.MAIN_MENU:
         raise HTTPException(status_code=400, detail="Can only upgrade car in main menu")
@@ -188,6 +200,7 @@ async def upgrade_car(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to upgrade car - insufficient budget or invalid stat")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -200,7 +213,7 @@ async def start_development(
     user_id: str = Depends(get_current_user_id),
 ):
     """Start a development node."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.MAIN_MENU:
         raise HTTPException(status_code=400, detail="Can only start development in main menu")
@@ -209,6 +222,7 @@ async def start_development(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to start development - invalid node, locked, or insufficient budget")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -221,9 +235,10 @@ async def mark_ready(
     user_id: str = Depends(get_current_user_id),
 ):
     """Mark player as ready to proceed."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     game_state.set_player_ready(user_id, request.ready)
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -235,7 +250,7 @@ async def start_race_weekend(
     user_id: str = Depends(get_current_user_id),
 ):
     """Start a race weekend (qualifying)."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.MAIN_MENU:
         raise HTTPException(status_code=400, detail="Cannot start race weekend in current phase")
@@ -244,6 +259,7 @@ async def start_race_weekend(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to start race weekend")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -253,7 +269,7 @@ async def advance_qualifying(
     user_id: str = Depends(get_current_user_id),
 ):
     """Advance to the next qualifying session (Q1->Q2->Q3->Tire Selection)."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     valid_phases = [
         GamePhase.QUALIFYING_Q1, GamePhase.QUALIFYING_Q2, GamePhase.QUALIFYING_Q3,
@@ -268,6 +284,7 @@ async def advance_qualifying(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to advance qualifying")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -277,7 +294,7 @@ async def advance_to_tire_selection(
     user_id: str = Depends(get_current_user_id),
 ):
     """Advance from qualifying to tire selection (legacy endpoint)."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     # Support both old QUALIFYING phase and new Q3 phase
     if game_state.phase not in [GamePhase.QUALIFYING, GamePhase.QUALIFYING_Q3]:
@@ -291,6 +308,7 @@ async def advance_to_tire_selection(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to advance to tire selection")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -302,7 +320,7 @@ async def start_sprint_race(
     user_id: str = Depends(get_current_user_id),
 ):
     """Start the sprint race from the sprint grid."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.SPRINT_GRID:
         raise HTTPException(status_code=400, detail="Not on sprint grid")
@@ -311,6 +329,7 @@ async def start_sprint_race(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to start sprint race")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -320,12 +339,13 @@ async def simulate_sprint_lap(
     user_id: str = Depends(get_current_user_id),
 ):
     """Simulate one lap of the sprint race."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.SPRINT_RACE:
         raise HTTPException(status_code=400, detail="Sprint race not in progress")
 
     game_state.simulate_sprint_lap()
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -335,7 +355,7 @@ async def advance_from_sprint(
     user_id: str = Depends(get_current_user_id),
 ):
     """Advance from sprint results to main race qualifying."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.SPRINT_RESULTS:
         raise HTTPException(status_code=400, detail="Not in sprint results phase")
@@ -344,6 +364,7 @@ async def advance_from_sprint(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to advance from sprint results")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -354,7 +375,7 @@ async def select_tire(
     user_id: str = Depends(get_current_user_id),
 ):
     """Select tire compound for a driver."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.TIRE_SELECTION:
         raise HTTPException(status_code=400, detail="Not in tire selection phase")
@@ -363,6 +384,7 @@ async def select_tire(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to select tire - not your driver or not your turn")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -372,7 +394,7 @@ async def ready_to_race(
     user_id: str = Depends(get_current_user_id),
 ):
     """Mark player as ready to start the race (after selecting tires)."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.TIRE_SELECTION:
         raise HTTPException(status_code=400, detail="Not in tire selection phase")
@@ -381,6 +403,7 @@ async def ready_to_race(
     if not success:
         raise HTTPException(status_code=400, detail="Must select tires for all drivers first")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -392,12 +415,13 @@ async def simulate_lap(
     user_id: str = Depends(get_current_user_id),
 ):
     """Simulate one lap of the race."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.RACE_IN_PROGRESS:
         raise HTTPException(status_code=400, detail="Race not in progress")
 
     game_state.simulate_race_lap()
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -408,7 +432,7 @@ async def make_pit_stop(
     user_id: str = Depends(get_current_user_id),
 ):
     """Make a pit stop for a driver."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.RACE_IN_PROGRESS:
         raise HTTPException(status_code=400, detail="Race not in progress")
@@ -417,6 +441,7 @@ async def make_pit_stop(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to pit driver - not your driver")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -426,12 +451,13 @@ async def confirm_pit_decisions(
     user_id: str = Depends(get_current_user_id),
 ):
     """Confirm pit decisions (after pitting or choosing to stay out) for multiplayer sync."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.RACE_IN_PROGRESS:
         raise HTTPException(status_code=400, detail="Race not in progress")
 
     game_state.confirm_pit_decisions(user_id)
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -441,12 +467,13 @@ async def simulate_full_race(
     user_id: str = Depends(get_current_user_id),
 ):
     """Simulate the entire race at once."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.RACE_IN_PROGRESS:
         raise HTTPException(status_code=400, detail="Race not in progress")
 
     game_state.simulate_full_race()
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -456,7 +483,7 @@ async def advance_to_next_race(
     user_id: str = Depends(get_current_user_id),
 ):
     """Advance to the next race."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.RACE_RESULTS:
         raise HTTPException(status_code=400, detail="Race not finished")
@@ -465,6 +492,7 @@ async def advance_to_next_race(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to advance to next race")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -477,9 +505,10 @@ async def mark_message_read(
     user_id: str = Depends(get_current_user_id),
 ):
     """Mark an inbox message as read."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     game_state.mark_message_read(user_id, message_id)
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -492,7 +521,7 @@ async def transfer_sign_driver(
     user_id: str = Depends(get_current_user_id),
 ):
     """Sign a driver during the transfer window."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.TRANSFER_WINDOW:
         raise HTTPException(status_code=400, detail="Not in transfer window")
@@ -506,6 +535,7 @@ async def transfer_sign_driver(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to sign driver - not interested, too expensive, or team full")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -516,7 +546,7 @@ async def transfer_release_driver(
     user_id: str = Depends(get_current_user_id),
 ):
     """Release a driver during the transfer window."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.TRANSFER_WINDOW:
         raise HTTPException(status_code=400, detail="Not in transfer window")
@@ -525,6 +555,7 @@ async def transfer_release_driver(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to release driver - must keep at least one driver")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)
 
 
@@ -534,7 +565,7 @@ async def skip_transfer_window(
     user_id: str = Depends(get_current_user_id),
 ):
     """Skip the transfer window and start the next season."""
-    game_state = get_game_state(game_id, user_id)
+    game_state = await get_game_state(game_id, user_id)
 
     if game_state.phase != GamePhase.TRANSFER_WINDOW:
         raise HTTPException(status_code=400, detail="Not in transfer window")
@@ -543,4 +574,5 @@ async def skip_transfer_window(
     if not success:
         raise HTTPException(status_code=400, detail="Failed to skip transfer window")
 
+    await save_game_state(game_id)
     return game_state.get_state_response(user_id)

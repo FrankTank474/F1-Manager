@@ -11,6 +11,7 @@ from .api.health import router as health_router
 from .api.v1.router import api_router
 from .datastore.factory import create_datastore
 from .dependencies import set_datastore
+from .services.game_state_service import game_state_manager
 
 
 @asynccontextmanager
@@ -20,6 +21,9 @@ async def lifespan(app: FastAPI):
     datastore = create_datastore()
     await datastore.initialize()
     set_datastore(datastore)
+
+    # Set datastore on game state manager for persistence
+    game_state_manager.set_datastore(datastore)
 
     yield
 

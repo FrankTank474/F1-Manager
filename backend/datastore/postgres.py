@@ -87,6 +87,12 @@ class PostgresDatastore(DatastoreInterface):
                 CREATE INDEX IF NOT EXISTS idx_invites_game ON game_invites(game_id);
                 CREATE INDEX IF NOT EXISTS idx_invites_invitee ON game_invites(invitee_id);
                 CREATE INDEX IF NOT EXISTS idx_invites_status ON game_invites(status);
+
+                CREATE TABLE IF NOT EXISTS game_states (
+                    game_id UUID PRIMARY KEY REFERENCES games(id) ON DELETE CASCADE,
+                    state_data JSONB NOT NULL,
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                );
             """)
 
     async def create_user(self, email: str, username: str, password_hash: str) -> User:
@@ -507,3 +513,43 @@ class PostgresDatastore(DatastoreInterface):
             created_at=row["created_at"],
             responded_at=row["responded_at"],
         )
+
+    # Game state persistence
+    async def save_game_state(self, game_id: str, state_data: dict) -> None:
+        """Save game state data as JSON."""
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO game_states (game_id, state_data, updated_at)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (game_id) DO UPDATE SET
+                    state_data = EXCLUDED.state_data,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                uuid.UUID(game_id),
+                json.dumps(state_data, default=str),
+                datetime.now(timezone.utc),
+            )
+
+    async def load_game_state(self, game_id: str) -> Optional[dict]:
+        """Load game state data. Returns None if not found."""
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT state_data FROM game_states WHERE game_id = $1",
+                uuid.UUID(game_id),
+            )
+            if not row:
+                return None
+            state_data = row["state_data"]
+            if isinstance(state_data, str):
+                return json.loads(state_data)
+            return state_data
+
+    async def delete_game_state(self, game_id: str) -> bool:
+        """Delete game state data."""
+        async with self._pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM game_states WHERE game_id = $1",
+                uuid.UUID(game_id),
+            )
+            return result == "DELETE 1"

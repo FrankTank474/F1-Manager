@@ -3440,53 +3440,121 @@ class MultiplayerGameState:
         # Qualifying results - return appropriate session results based on phase
         quali_source = self.qualifying_results
         if self.phase == GamePhase.QUALIFYING_Q1:
-            quali_source = self.q1_results
-        elif self.phase == GamePhase.QUALIFYING_Q2:
-            # For Q2, combine Q1 results with elimination info
+            # Q1: Show all 20 drivers with their Q1 times, bottom 5 eliminated
             quali_source = []
             for r in self.q1_results:
                 result = dict(r)
-                if r["driver_name"] in self.eliminated_q1:
+                result["q1_time"] = r["lap_time"]
+                if r["position"] >= 16:
                     result["eliminated_in"] = "Q1"
                 quali_source.append(result)
-        elif self.phase == GamePhase.QUALIFYING_Q3:
-            # For Q3, show combined results with elimination info
+        elif self.phase == GamePhase.QUALIFYING_Q2:
+            # Q2: Show the 15 drivers who participated in Q2 with their Q2 times
             quali_source = []
-            for r in self.q1_results:
+            for r in self.q2_results:
                 result = dict(r)
-                if r["driver_name"] in self.eliminated_q1:
-                    result["eliminated_in"] = "Q1"
-                elif r["driver_name"] in self.eliminated_q2:
+                result["q2_time"] = r["lap_time"]
+                result["q2_tire"] = self.q2_tire_choices.get(r["driver_name"], "soft")
+                if r["position"] >= 11:
                     result["eliminated_in"] = "Q2"
-                # Add Q2 time if available
+                quali_source.append(result)
+        elif self.phase == GamePhase.QUALIFYING_Q3:
+            # Q3: Show full grid - top 10 with Q3 times, 11-15 eliminated in Q2, 16-20 eliminated in Q1
+            quali_source = []
+            # Add Q3 results (positions 1-10)
+            for r in self.q3_results:
+                result = dict(r)
+                result["q3_time"] = r["lap_time"]
+                result["q2_tire"] = self.q2_tire_choices.get(r["driver_name"], "soft")
+                # Find Q1 time for this driver
+                for q1r in self.q1_results:
+                    if q1r["driver_name"] == r["driver_name"]:
+                        result["q1_time"] = q1r["lap_time"]
+                        break
+                # Find Q2 time for this driver
                 for q2r in self.q2_results:
                     if q2r["driver_name"] == r["driver_name"]:
                         result["q2_time"] = q2r["lap_time"]
                         break
-                # Add Q3 time if available
-                for q3r in self.q3_results:
-                    if q3r["driver_name"] == r["driver_name"]:
-                        result["q3_time"] = q3r["lap_time"]
-                        break
                 quali_source.append(result)
+            # Add Q2 eliminated (positions 11-15)
+            for r in self.q2_results:
+                if r["driver_name"] in self.eliminated_q2:
+                    result = dict(r)
+                    result["position"] = 10 + len([x for x in quali_source if x.get("eliminated_in") == "Q2"]) + 1
+                    result["q2_time"] = r["lap_time"]
+                    result["eliminated_in"] = "Q2"
+                    # Find Q1 time
+                    for q1r in self.q1_results:
+                        if q1r["driver_name"] == r["driver_name"]:
+                            result["q1_time"] = q1r["lap_time"]
+                            break
+                    quali_source.append(result)
+            # Add Q1 eliminated (positions 16-20)
+            for r in self.q1_results:
+                if r["driver_name"] in self.eliminated_q1:
+                    result = dict(r)
+                    result["position"] = 15 + len([x for x in quali_source if x.get("eliminated_in") == "Q1"]) + 1
+                    result["q1_time"] = r["lap_time"]
+                    result["eliminated_in"] = "Q1"
+                    quali_source.append(result)
+            # Sort by position
+            quali_source.sort(key=lambda x: x["position"])
         elif self.phase == GamePhase.SPRINT_SHOOTOUT_Q1:
-            quali_source = self.q1_results
+            quali_source = []
+            for r in self.q1_results:
+                result = dict(r)
+                result["q1_time"] = r["lap_time"]
+                if r["position"] >= 16:
+                    result["eliminated_in"] = "SQ1"
+                quali_source.append(result)
         elif self.phase == GamePhase.SPRINT_SHOOTOUT_Q2:
             quali_source = []
-            for r in self.q1_results:
+            for r in self.q2_results:
                 result = dict(r)
-                if r["driver_name"] in self.eliminated_q1:
-                    result["eliminated_in"] = "SQ1"
-                quali_source.append(result)
-        elif self.phase == GamePhase.SPRINT_SHOOTOUT_Q3:
-            quali_source = []
-            for r in self.q1_results:
-                result = dict(r)
-                if r["driver_name"] in self.eliminated_q1:
-                    result["eliminated_in"] = "SQ1"
-                elif r["driver_name"] in self.eliminated_q2:
+                result["q2_time"] = r["lap_time"]
+                if r["position"] >= 11:
                     result["eliminated_in"] = "SQ2"
                 quali_source.append(result)
+        elif self.phase == GamePhase.SPRINT_SHOOTOUT_Q3:
+            # SQ3: Show full grid - top 10 with SQ3 times, 11-15 eliminated in SQ2, 16-20 eliminated in SQ1
+            quali_source = []
+            # Add SQ3 results (positions 1-10)
+            for r in self.q3_results:
+                result = dict(r)
+                result["q3_time"] = r["lap_time"]
+                # Find SQ1 time for this driver
+                for q1r in self.q1_results:
+                    if q1r["driver_name"] == r["driver_name"]:
+                        result["q1_time"] = q1r["lap_time"]
+                        break
+                # Find SQ2 time for this driver
+                for q2r in self.q2_results:
+                    if q2r["driver_name"] == r["driver_name"]:
+                        result["q2_time"] = q2r["lap_time"]
+                        break
+                quali_source.append(result)
+            # Add SQ2 eliminated (positions 11-15)
+            for r in self.q2_results:
+                if r["driver_name"] in self.eliminated_q2:
+                    result = dict(r)
+                    result["position"] = 10 + len([x for x in quali_source if x.get("eliminated_in") == "SQ2"]) + 1
+                    result["q2_time"] = r["lap_time"]
+                    result["eliminated_in"] = "SQ2"
+                    for q1r in self.q1_results:
+                        if q1r["driver_name"] == r["driver_name"]:
+                            result["q1_time"] = q1r["lap_time"]
+                            break
+                    quali_source.append(result)
+            # Add SQ1 eliminated (positions 16-20)
+            for r in self.q1_results:
+                if r["driver_name"] in self.eliminated_q1:
+                    result = dict(r)
+                    result["position"] = 15 + len([x for x in quali_source if x.get("eliminated_in") == "SQ1"]) + 1
+                    result["q1_time"] = r["lap_time"]
+                    result["eliminated_in"] = "SQ1"
+                    quali_source.append(result)
+            quali_source.sort(key=lambda x: x["position"])
 
         qual_results = [
             QualifyingResult(
@@ -3495,9 +3563,10 @@ class MultiplayerGameState:
                 is_player_driver=q.get("is_player_driver", False),
                 player_id=q.get("player_id"),
                 eliminated_in=q.get("eliminated_in"),
-                q1_time=q.get("q1_time") or q.get("lap_time"),
+                q1_time=q.get("q1_time"),
                 q2_time=q.get("q2_time"),
-                q3_time=q.get("q3_time")
+                q3_time=q.get("q3_time"),
+                q2_tire=q.get("q2_tire")
             )
             for q in quali_source
         ]

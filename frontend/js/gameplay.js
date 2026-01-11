@@ -2039,8 +2039,10 @@ function renderTireSelection(container, state) {
     const isMultiplayer = state.is_multiplayer;
     const myPlayer = state.players?.find(p => p.player_id === state.your_player_id);
     const otherPlayer = state.players?.find(p => p.player_id !== state.your_player_id);
-    const imReady = myPlayer?.has_selected_tires;
-    const opponentReady = otherPlayer?.has_selected_tires;
+    const tiresSelected = myPlayer?.has_selected_tires;
+    const opponentTiresSelected = otherPlayer?.has_selected_tires;
+    const imReady = myPlayer?.is_ready;
+    const opponentReady = otherPlayer?.is_ready;
     const bothReady = isMultiplayer ? (imReady && opponentReady) : true;
 
     container.innerHTML = `
@@ -2051,7 +2053,7 @@ function renderTireSelection(container, state) {
             </div>
 
             <div class="game-content">
-                ${!imReady ? `
+                ${!tiresSelected ? `
                     <div class="tire-selection-grid">
                         ${drivers.map((driver, idx) => `
                             <div class="card tire-selection-card" data-driver-id="${driver.id}">
@@ -2086,24 +2088,29 @@ function renderTireSelection(container, state) {
                     <div class="tires-confirmed card text-center">
                         <h3>Tires Selected!</h3>
                         <p class="text-secondary">Your starting tire choices have been locked in.</p>
+                        ${isMultiplayer && !imReady ? `
+                            <button class="btn btn-success btn-lg mt-lg" id="ready-to-race-btn">
+                                Ready to Race!
+                            </button>
+                        ` : ''}
                     </div>
                 `}
 
                 ${isMultiplayer ? `
                     <div class="sync-status mt-xl">
-                        <div class="sync-player ${imReady ? 'is-ready' : ''}">
+                        <div class="sync-player ${tiresSelected ? 'is-ready' : ''}">
                             <span class="sync-name">You</span>
-                            <span class="sync-indicator">${imReady ? 'Tires Set' : 'Selecting'}</span>
+                            <span class="sync-indicator">${imReady ? 'Ready!' : tiresSelected ? 'Tires Set' : 'Selecting'}</span>
                         </div>
-                        <div class="sync-player ${opponentReady ? 'is-ready' : ''}">
+                        <div class="sync-player ${opponentTiresSelected ? 'is-ready' : ''}">
                             <span class="sync-name">${escapeHtml(otherPlayer?.username || 'Opponent')}</span>
-                            <span class="sync-indicator">${opponentReady ? 'Tires Set' : 'Selecting'}</span>
+                            <span class="sync-indicator">${opponentReady ? 'Ready!' : opponentTiresSelected ? 'Tires Set' : 'Selecting'}</span>
                         </div>
                     </div>
-                    ${imReady && !bothReady ? `
+                    ${tiresSelected && imReady && !bothReady ? `
                         <div class="waiting-sync mt-lg">
                             <div class="spinner-small"></div>
-                            <span>Waiting for ${escapeHtml(otherPlayer?.username || 'opponent')} to select tires...</span>
+                            <span>Waiting for ${escapeHtml(otherPlayer?.username || 'opponent')} to ready up...</span>
                         </div>
                     ` : ''}
                 ` : ''}
@@ -2147,8 +2154,22 @@ function renderTireSelection(container, state) {
         }
     });
 
-    // Auto-refresh when ready (to detect when other player advances phase)
-    if (isMultiplayer && imReady) {
+    // Ready to race handler (multiplayer only)
+    document.getElementById('ready-to-race-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('ready-to-race-btn');
+        setButtonLoading(btn, true);
+
+        try {
+            const newState = await api.post(`/gameplay/${state.game_id}/ready-to-race`);
+            renderGameScreen(container, newState);
+        } catch (error) {
+            showAlert(container.querySelector('.game-content'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
+
+    // Auto-refresh when waiting for opponent (to detect when other player is ready or race starts)
+    if (isMultiplayer && tiresSelected) {
         startRefreshInterval(state.game_id, container);
     }
 }

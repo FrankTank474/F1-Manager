@@ -366,6 +366,24 @@ async def select_tire(
     return game_state.get_state_response(user_id)
 
 
+@router.post("/{game_id}/ready-to-race", response_model=GameStateResponse)
+async def ready_to_race(
+    game_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Mark player as ready to start the race (after selecting tires)."""
+    game_state = get_game_state(game_id, user_id)
+
+    if game_state.phase != GamePhase.TIRE_SELECTION:
+        raise HTTPException(status_code=400, detail="Not in tire selection phase")
+
+    success = game_state.ready_to_race(user_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Must select tires for all drivers first")
+
+    return game_state.get_state_response(user_id)
+
+
 # ==================== RACE SIMULATION ====================
 
 @router.post("/{game_id}/simulate-lap", response_model=GameStateResponse)

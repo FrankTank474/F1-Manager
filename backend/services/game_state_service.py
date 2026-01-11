@@ -1596,6 +1596,7 @@ class MultiplayerGameState:
             # Qualifying complete - build final grid and go to tire selection
             self._build_final_qualifying_grid(is_for_sprint=False)
             self.phase = GamePhase.TIRE_SELECTION
+            self.player_tire_selections = {pid: {} for pid in self.players}
         elif self.phase == GamePhase.SPRINT_SHOOTOUT_Q1:
             self.current_quali_session = "SHOOTOUT_Q2"
             self._run_qualifying_session("SHOOTOUT_Q2")
@@ -1979,8 +1980,28 @@ class MultiplayerGameState:
         if all_selected:
             self.players[player_id]["has_selected_tires"] = True
 
-        # Check if all players have selected
-        if all(self.players[pid].get("has_selected_tires", False) for pid in self.players):
+        # In single player, auto-start when tires selected
+        # In multiplayer, wait for ready-up
+        if len(self.players) == 1:
+            if all(self.players[pid].get("has_selected_tires", False) for pid in self.players):
+                self._start_race()
+
+        return True
+
+    def ready_to_race(self, player_id: str) -> bool:
+        """Mark player as ready to start the race (after tire selection)."""
+        if self.phase != GamePhase.TIRE_SELECTION:
+            return False
+
+        # Must have selected tires first
+        if not self.players[player_id].get("has_selected_tires", False):
+            return False
+
+        self.mark_ready(player_id, True)
+
+        # Check if all players are ready
+        if self.all_players_ready():
+            self.reset_ready()
             self._start_race()
 
         return True

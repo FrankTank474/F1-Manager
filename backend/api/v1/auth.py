@@ -4,7 +4,6 @@ from ...models.auth import LoginRequest, LoginResponse, RefreshRequest, RefreshR
 from ...models.user import UserCreate, User
 from ...services.auth_service import AuthService
 from ...dependencies import get_auth_service, get_current_user_id
-from ...middleware.rate_limit import rate_limiter
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -34,22 +33,10 @@ async def register(
 
 @router.post("/login", response_model=LoginResponse)
 async def login(
-    request: Request,
     credentials: LoginRequest,
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """Authenticate user and return tokens."""
-    client_ip = request.client.host if request.client else "unknown"
-    rate_key = f"login:{client_ip}"
-
-    # Check rate limit
-    if not await rate_limiter.is_allowed(rate_key):
-        reset_time = rate_limiter.get_reset_time(rate_key)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Too many login attempts. Please try again in {reset_time} seconds.",
-        )
-
     result = await auth_service.authenticate(credentials.email, credentials.password)
 
     if not result:
@@ -57,9 +44,6 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
-
-    # Reset rate limit on successful login
-    await rate_limiter.reset(rate_key)
 
     return result
 

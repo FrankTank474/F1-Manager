@@ -219,7 +219,7 @@ class Weather(Enum):
 class TireState:
     """Tire state with CLI performance curves."""
     BASE_PERFORMANCE = {"soft": 1.0, "medium": 0.75, "hard": 0.55, "intermediate": 0.65, "wet": 0.55}
-    DEGRADATION_RATES = {"soft": 4.5, "medium": 2.8, "hard": 1.6, "intermediate": 2.0, "wet": 1.8}
+    DEGRADATION_RATES = {"soft": 4.5, "medium": 2.3, "hard": 1.6, "intermediate": 2.0, "wet": 1.8}
 
     def __init__(self, compound: str):
         self.compound = compound

@@ -779,8 +779,8 @@ class MultiplayerGameState:
             "name": default_team_name,
             "budget": 50.0,
             # Backmarker car stats - starting from the back of the grid
-            "car": {"downforce": 62, "aero_efficiency": 60, "chassis": 63,
-                    "power_unit": 61, "reliability": 68, "tire_cooling": 60},
+            "car": {"downforce": 66, "aero_efficiency": 64, "chassis": 67,
+                    "power_unit": 65, "reliability": 70, "tire_cooling": 64},
             "drivers": [],
             "season_points": 0,
             "race_wins": 0,
@@ -1492,27 +1492,36 @@ class MultiplayerGameState:
                 })
 
             # Store results in appropriate session
+            # Dynamic elimination based on grid size:
+            # Q1: Eliminate to leave 15 drivers for Q2
+            # Q2: Eliminate to leave 10 drivers for Q3
+            # Q3: Top 10 fight for pole
             if session_num == "Q1":
                 self.q1_results = results
-                # Bottom 5 eliminated (positions 16-20)
-                if len(results) >= 16:
+                # Eliminate all but top 15
+                if len(results) > 15:
                     self.eliminated_q1 = [r["driver_name"] for r in results[15:]]
+                else:
+                    self.eliminated_q1 = []
             elif session_num == "Q2":
                 self.q2_results = results
-                # Bottom 5 eliminated (positions 11-15 overall, but 11-15 of Q2)
-                if len(results) >= 6:
+                # Eliminate all but top 10
+                if len(results) > 10:
                     self.eliminated_q2 = [r["driver_name"] for r in results[10:]]
+                else:
+                    self.eliminated_q2 = []
             elif session_num == "Q3":
                 self.q3_results = results
 
     def _build_final_qualifying_grid(self, is_for_sprint: bool = False) -> List[Dict]:
         """Build the final qualifying grid from Q1/Q2/Q3 results."""
         final_grid = []
+        current_position = 1
 
-        # Q3 results are positions 1-10
-        for i, r in enumerate(self.q3_results[:10]):
+        # Q3 results are positions 1-10 (top 10)
+        for r in self.q3_results[:10]:
             result = {
-                "position": i + 1,
+                "position": current_position,
                 "driver_name": r["driver_name"],
                 "team_name": r["team_name"],
                 "lap_time": r["lap_time"],
@@ -1525,12 +1534,13 @@ class MultiplayerGameState:
                 "q2_tire": self.q2_tire_choices.get(r["driver_name"], "soft")
             }
             final_grid.append(result)
+            current_position += 1
 
-        # Q2 eliminated are positions 11-15
+        # Q2 eliminated drivers (positions 11-15)
         q2_eliminated = [r for r in self.q2_results if r["driver_name"] in self.eliminated_q2]
-        for i, r in enumerate(q2_eliminated[:5]):
+        for r in q2_eliminated:
             result = {
-                "position": 11 + i,
+                "position": current_position,
                 "driver_name": r["driver_name"],
                 "team_name": r["team_name"],
                 "lap_time": r["lap_time"],
@@ -1540,15 +1550,16 @@ class MultiplayerGameState:
                 "q1_time": self._get_session_time(r["driver_name"], "Q1"),
                 "q2_time": r["lap_time"],
                 "q3_time": None,
-                "q2_tire": None  # Doesn't apply - they don't start on Q2 tire
+                "q2_tire": None
             }
             final_grid.append(result)
+            current_position += 1
 
-        # Q1 eliminated are positions 16-20
+        # Q1 eliminated drivers (remaining positions)
         q1_eliminated = [r for r in self.q1_results if r["driver_name"] in self.eliminated_q1]
-        for i, r in enumerate(q1_eliminated[:5]):
+        for r in q1_eliminated:
             result = {
-                "position": 16 + i,
+                "position": current_position,
                 "driver_name": r["driver_name"],
                 "team_name": r["team_name"],
                 "lap_time": r["lap_time"],
@@ -1561,6 +1572,7 @@ class MultiplayerGameState:
                 "q2_tire": None
             }
             final_grid.append(result)
+            current_position += 1
 
         if is_for_sprint:
             self.sprint_qualifying_results = final_grid
@@ -3479,30 +3491,32 @@ class MultiplayerGameState:
         # Qualifying results - return appropriate session results based on phase
         quali_source = self.qualifying_results
         if self.phase == GamePhase.QUALIFYING_Q1:
-            # Q1: Show all 20 drivers with their Q1 times, bottom 5 eliminated
+            # Q1: Show all drivers with their Q1 times, slowest eliminated
             quali_source = []
             for r in self.q1_results:
                 result = dict(r)
                 result["q1_time"] = r["lap_time"]
-                if r["position"] >= 16:
+                if r["driver_name"] in self.eliminated_q1:
                     result["eliminated_in"] = "Q1"
                 quali_source.append(result)
         elif self.phase == GamePhase.QUALIFYING_Q2:
-            # Q2: Show the 15 drivers who participated in Q2 with their Q2 times
+            # Q2: Show the drivers who participated in Q2 with their Q2 times
             quali_source = []
             for r in self.q2_results:
                 result = dict(r)
                 result["q2_time"] = r["lap_time"]
                 result["q2_tire"] = self.q2_tire_choices.get(r["driver_name"], "soft")
-                if r["position"] >= 11:
+                if r["driver_name"] in self.eliminated_q2:
                     result["eliminated_in"] = "Q2"
                 quali_source.append(result)
         elif self.phase == GamePhase.QUALIFYING_Q3:
-            # Q3: Show full grid - top 10 with Q3 times, 11-15 eliminated in Q2, 16-20 eliminated in Q1
+            # Q3: Show full grid - top 10 with Q3 times, rest eliminated in Q2/Q1
             quali_source = []
+            current_pos = 1
             # Add Q3 results (positions 1-10)
-            for r in self.q3_results:
+            for r in self.q3_results[:10]:
                 result = dict(r)
+                result["position"] = current_pos
                 result["q3_time"] = r["lap_time"]
                 result["q2_tire"] = self.q2_tire_choices.get(r["driver_name"], "soft")
                 # Find Q1 time for this driver
@@ -3516,11 +3530,12 @@ class MultiplayerGameState:
                         result["q2_time"] = q2r["lap_time"]
                         break
                 quali_source.append(result)
-            # Add Q2 eliminated (positions 11-15)
+                current_pos += 1
+            # Add Q2 eliminated
             for r in self.q2_results:
                 if r["driver_name"] in self.eliminated_q2:
                     result = dict(r)
-                    result["position"] = 10 + len([x for x in quali_source if x.get("eliminated_in") == "Q2"]) + 1
+                    result["position"] = current_pos
                     result["q2_time"] = r["lap_time"]
                     result["eliminated_in"] = "Q2"
                     # Find Q1 time
@@ -3529,14 +3544,16 @@ class MultiplayerGameState:
                             result["q1_time"] = q1r["lap_time"]
                             break
                     quali_source.append(result)
-            # Add Q1 eliminated (positions 16-20)
+                    current_pos += 1
+            # Add Q1 eliminated
             for r in self.q1_results:
                 if r["driver_name"] in self.eliminated_q1:
                     result = dict(r)
-                    result["position"] = 15 + len([x for x in quali_source if x.get("eliminated_in") == "Q1"]) + 1
+                    result["position"] = current_pos
                     result["q1_time"] = r["lap_time"]
                     result["eliminated_in"] = "Q1"
                     quali_source.append(result)
+                    current_pos += 1
             # Sort by position
             quali_source.sort(key=lambda x: x["position"])
         elif self.phase == GamePhase.SPRINT_SHOOTOUT_Q1:
@@ -3544,7 +3561,7 @@ class MultiplayerGameState:
             for r in self.q1_results:
                 result = dict(r)
                 result["q1_time"] = r["lap_time"]
-                if r["position"] >= 16:
+                if r["driver_name"] in self.eliminated_q1:
                     result["eliminated_in"] = "SQ1"
                 quali_source.append(result)
         elif self.phase == GamePhase.SPRINT_SHOOTOUT_Q2:
@@ -3552,15 +3569,17 @@ class MultiplayerGameState:
             for r in self.q2_results:
                 result = dict(r)
                 result["q2_time"] = r["lap_time"]
-                if r["position"] >= 11:
+                if r["driver_name"] in self.eliminated_q2:
                     result["eliminated_in"] = "SQ2"
                 quali_source.append(result)
         elif self.phase == GamePhase.SPRINT_SHOOTOUT_Q3:
-            # SQ3: Show full grid - top 10 with SQ3 times, 11-15 eliminated in SQ2, 16-20 eliminated in SQ1
+            # SQ3: Show full grid - top 10 with SQ3 times, rest eliminated in SQ2/SQ1
             quali_source = []
+            current_pos = 1
             # Add SQ3 results (positions 1-10)
-            for r in self.q3_results:
+            for r in self.q3_results[:10]:
                 result = dict(r)
+                result["position"] = current_pos
                 result["q3_time"] = r["lap_time"]
                 # Find SQ1 time for this driver
                 for q1r in self.q1_results:
@@ -3573,11 +3592,12 @@ class MultiplayerGameState:
                         result["q2_time"] = q2r["lap_time"]
                         break
                 quali_source.append(result)
-            # Add SQ2 eliminated (positions 11-15)
+                current_pos += 1
+            # Add SQ2 eliminated
             for r in self.q2_results:
                 if r["driver_name"] in self.eliminated_q2:
                     result = dict(r)
-                    result["position"] = 10 + len([x for x in quali_source if x.get("eliminated_in") == "SQ2"]) + 1
+                    result["position"] = current_pos
                     result["q2_time"] = r["lap_time"]
                     result["eliminated_in"] = "SQ2"
                     for q1r in self.q1_results:
@@ -3585,14 +3605,16 @@ class MultiplayerGameState:
                             result["q1_time"] = q1r["lap_time"]
                             break
                     quali_source.append(result)
-            # Add SQ1 eliminated (positions 16-20)
+                    current_pos += 1
+            # Add SQ1 eliminated
             for r in self.q1_results:
                 if r["driver_name"] in self.eliminated_q1:
                     result = dict(r)
-                    result["position"] = 15 + len([x for x in quali_source if x.get("eliminated_in") == "SQ1"]) + 1
+                    result["position"] = current_pos
                     result["q1_time"] = r["lap_time"]
                     result["eliminated_in"] = "SQ1"
                     quali_source.append(result)
+                    current_pos += 1
             quali_source.sort(key=lambda x: x["position"])
 
         qual_results = [

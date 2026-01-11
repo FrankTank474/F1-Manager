@@ -1101,7 +1101,7 @@ function formatMessageTime(timestamp) {
 }
 
 /**
- * Q1 Qualifying Screen - All 20 drivers, bottom 5 eliminated
+ * Q1 Qualifying Screen - All drivers, slowest eliminated
  */
 function renderQualifyingQ1(container, state) {
     const isMultiplayer = state.is_multiplayer;
@@ -1112,8 +1112,11 @@ function renderQualifyingQ1(container, state) {
     const bothReady = isMultiplayer ? (imReady && opponentReady) : true;
     const isSprintWeekend = state.current_track?.is_sprint_weekend;
 
-    // Q1 results - positions 1-20, bottom 5 (16-20) are eliminated
+    // Q1 results - all drivers, slowest are eliminated
     const q1Results = state.qualifying_results || [];
+    const totalDrivers = q1Results.length;
+    const eliminatedCount = q1Results.filter(r => r.eliminated_in === 'Q1').length;
+    const advancingTo = totalDrivers - eliminatedCount;
 
     container.innerHTML = `
         <div class="game-container">
@@ -1129,7 +1132,7 @@ function renderQualifyingQ1(container, state) {
 
             <div class="game-content">
                 <div class="quali-info-bar mb-md">
-                    <span class="quali-info">Bottom 5 drivers eliminated (P16-P20)</span>
+                    <span class="quali-info">Top ${advancingTo} advance to Q2 | ${eliminatedCount} drivers eliminated</span>
                 </div>
 
                 <div class="card">
@@ -1145,7 +1148,7 @@ function renderQualifyingQ1(container, state) {
                         </thead>
                         <tbody>
                             ${q1Results.map((result, idx) => {
-                                const isEliminated = result.position >= 16 || result.eliminated_in === 'Q1';
+                                const isEliminated = result.eliminated_in === 'Q1';
                                 return `
                                     <tr class="${result.player_id === state.your_player_id ? 'player-row your-driver' : ''} ${isEliminated ? 'eliminated-row' : ''}">
                                         <td class="pos-cell">${result.position}</td>
@@ -1169,7 +1172,7 @@ function renderQualifyingQ1(container, state) {
 }
 
 /**
- * Q2 Qualifying Screen - Top 15 drivers, bottom 5 eliminated
+ * Q2 Qualifying Screen - Q1 survivors, slowest eliminated
  */
 function renderQualifyingQ2(container, state) {
     const isMultiplayer = state.is_multiplayer;
@@ -1180,8 +1183,10 @@ function renderQualifyingQ2(container, state) {
     const bothReady = isMultiplayer ? (imReady && opponentReady) : true;
     const isSprintWeekend = state.current_track?.is_sprint_weekend;
 
-    // Q2 results - positions 1-15, bottom 5 (11-15) are eliminated
+    // Q2 results - drivers who survived Q1
     const q2Results = (state.qualifying_results || []).filter(r => !r.eliminated_in || r.eliminated_in !== 'Q1');
+    const eliminatedCount = q2Results.filter(r => r.eliminated_in === 'Q2').length;
+    const advancingTo = q2Results.length - eliminatedCount;
 
     container.innerHTML = `
         <div class="game-container">
@@ -1197,8 +1202,8 @@ function renderQualifyingQ2(container, state) {
 
             <div class="game-content">
                 <div class="quali-info-bar mb-md">
-                    <span class="quali-info">Top 10 advance to Q3 | Bottom 5 eliminated (P11-P15)</span>
-                    <span class="quali-info tire-info">Top 10 must start race on Q2 tires!</span>
+                    <span class="quali-info">Top ${advancingTo} advance to Q3 | ${eliminatedCount} drivers eliminated</span>
+                    <span class="quali-info tire-info">Top ${advancingTo} must start race on Q2 tires!</span>
                 </div>
 
                 <div class="card">
@@ -1216,7 +1221,7 @@ function renderQualifyingQ2(container, state) {
                         <tbody>
                             ${q2Results.map((result, idx) => {
                                 const q2Position = idx + 1;
-                                const isEliminated = q2Position >= 11 || result.eliminated_in === 'Q2';
+                                const isEliminated = result.eliminated_in === 'Q2';
                                 return `
                                     <tr class="${result.player_id === state.your_player_id ? 'player-row your-driver' : ''} ${isEliminated ? 'eliminated-row' : ''}">
                                         <td class="pos-cell">${q2Position}</td>

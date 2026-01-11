@@ -672,8 +672,8 @@ function renderMainMenu(container, state) {
     document.getElementById('standings-btn')?.addEventListener('click', () => renderStandingsScreen(container, state));
     document.getElementById('calendar-btn')?.addEventListener('click', () => renderCalendarScreen(container, state));
 
-    // Auto-refresh in multiplayer when waiting for opponent
-    if (isMultiplayer && imReady && !opponentReady) {
+    // Auto-refresh in multiplayer when ready (to detect when other player advances phase)
+    if (isMultiplayer && imReady) {
         startRefreshInterval(state.game_id, container);
     }
 }
@@ -1030,8 +1030,8 @@ function renderQualifying(container, state) {
         }
     });
 
-    // Auto-refresh when waiting for opponent
-    if (isMultiplayer && imReady && !opponentReady) {
+    // Auto-refresh when ready (to detect when other player advances phase)
+    if (isMultiplayer && imReady) {
         startRefreshInterval(state.game_id, container);
     }
 }
@@ -1152,8 +1152,8 @@ function renderTireSelection(container, state) {
         }
     });
 
-    // Auto-refresh when waiting for opponent
-    if (isMultiplayer && imReady && !opponentReady) {
+    // Auto-refresh when ready (to detect when other player advances phase)
+    if (isMultiplayer && imReady) {
         startRefreshInterval(state.game_id, container);
     }
 }
@@ -1556,8 +1556,8 @@ function renderRaceResults(container, state) {
         }
     });
 
-    // Auto-refresh when waiting for opponent
-    if (isMultiplayer && imReady && !opponentReady) {
+    // Auto-refresh when ready (to detect when other player advances phase)
+    if (isMultiplayer && imReady) {
         startRefreshInterval(state.game_id, container);
     }
 }

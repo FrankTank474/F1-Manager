@@ -688,11 +688,11 @@ function renderMainMenu(container, state) {
                                         <span class="detail-label">Laps</span>
                                     </div>
                                     <div class="race-detail">
-                                        <span class="detail-value">${track.track_type.replace('_', ' ')}</span>
+                                        <span class="detail-value">${formatTrackType(track.track_type)}</span>
                                         <span class="detail-label">Type</span>
                                     </div>
                                     <div class="race-detail">
-                                        <span class="detail-value">${(track.tire_degradation * 100).toFixed(0)}%</span>
+                                        <span class="detail-value">${getTireWearLevel(track.tire_degradation)}</span>
                                         <span class="detail-label">Tire Wear</span>
                                     </div>
                                 </div>
@@ -1527,9 +1527,10 @@ function renderRaceInProgress(container, state) {
         autoSimulateRace(container, state.game_id);
     });
 
-    // Auto-simulate race when not paused for pits
+    // Auto-simulate race when not paused for pits (or when all players have confirmed)
+    const allConfirmed = pitStatus?.all_confirmed || false;
     const shouldAutoSimulate = !raceState?.is_finished &&
-        (isMultiplayer ? !pausedForPits : !singlePlayerNeedsPit);
+        (isMultiplayer ? (!pausedForPits || allConfirmed) : !singlePlayerNeedsPit);
     if (shouldAutoSimulate) {
         autoSimulateRace(container, state.game_id);
     }
@@ -2329,6 +2330,22 @@ function getStatColor(value) {
     if (value >= 70) return 'var(--accent-primary)';
     if (value >= 55) return 'var(--warning)';
     return 'var(--error)';
+}
+
+function formatTrackType(trackType) {
+    if (!trackType) return 'Unknown';
+    // Convert snake_case to Title Case (e.g., "high_speed" -> "High Speed")
+    return trackType
+        .split('_')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join(' ');
+}
+
+function getTireWearLevel(degradation) {
+    // degradation is a multiplier (1.0 = normal, >1.0 = higher wear, <1.0 = lower wear)
+    if (degradation >= 1.2) return 'High';
+    if (degradation >= 0.9) return 'Medium';
+    return 'Low';
 }
 
 export { GamePhase, renderGameScreen };

@@ -73,7 +73,7 @@ AI_TEAM_CARS = {
     "Racing Bulls": {"downforce": 74, "aero_efficiency": 75, "chassis": 74, "power_unit": 76, "reliability": 77, "tire_cooling": 75},
     "Haas": {"downforce": 72, "aero_efficiency": 71, "chassis": 72, "power_unit": 74, "reliability": 76, "tire_cooling": 72},
     "Audi": {"downforce": 70, "aero_efficiency": 71, "chassis": 72, "power_unit": 73, "reliability": 76, "tire_cooling": 70},
-    "Cadillac": {"downforce": 68, "aero_efficiency": 68, "chassis": 70, "power_unit": 72, "reliability": 74, "tire_cooling": 68},
+    "Cadillac": {"downforce": 74, "aero_efficiency": 74, "chassis": 74, "power_unit": 74, "reliability": 76, "tire_cooling": 74},
 }
 
 # Sponsor definitions
@@ -897,8 +897,8 @@ class MultiplayerGameState:
             "name": default_team_name,
             "budget": 50.0,
             # Backmarker car stats - starting from the back of the grid
-            "car": {"downforce": 69, "aero_efficiency": 67, "chassis": 70,
-                    "power_unit": 68, "reliability": 73, "tire_cooling": 67},
+            "car": {"downforce": 73, "aero_efficiency": 73, "chassis": 73,
+                    "power_unit": 73, "reliability": 75, "tire_cooling": 73},
             "drivers": [],
             "season_points": 0,
             "race_wins": 0,

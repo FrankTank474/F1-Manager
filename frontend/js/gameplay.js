@@ -5,6 +5,7 @@ import { escapeHtml, formatDate, showAlert, setButtonLoading } from './utils.js'
 // Game phases
 const GamePhase = {
     WAITING_FOR_PLAYERS: 'waiting_for_players',
+    TEAM_NAME_SELECTION: 'team_name_selection',
     SPONSOR_SELECTION: 'sponsor_selection',
     TEAM_SETUP: 'team_setup',
     MAIN_MENU: 'main_menu',
@@ -13,7 +14,8 @@ const GamePhase = {
     TIRE_SELECTION: 'tire_selection',
     RACE_IN_PROGRESS: 'race_in_progress',
     RACE_RESULTS: 'race_results',
-    SEASON_END: 'season_end'
+    SEASON_END: 'season_end',
+    TRANSFER_WINDOW: 'transfer_window'
 };
 
 let currentGameState = null;
@@ -142,6 +144,12 @@ function renderGameScreen(container, state) {
             renderWaitingForPlayers(container, state);
             startRefreshInterval(state.game_id, container);
             break;
+        case GamePhase.TEAM_NAME_SELECTION:
+            renderTeamNameSelection(container, state);
+            if (state.players?.find(p => p.player_id === state.your_player_id)?.has_set_team_name) {
+                startRefreshInterval(state.game_id, container);
+            }
+            break;
         case GamePhase.SPONSOR_SELECTION:
             renderSponsorSelection(container, state);
             if (!state.players?.find(p => p.player_id === state.your_player_id)?.has_selected_sponsor) {
@@ -173,6 +181,9 @@ function renderGameScreen(container, state) {
             break;
         case GamePhase.SEASON_END:
             renderSeasonEnd(container, state);
+            break;
+        case GamePhase.TRANSFER_WINDOW:
+            renderTransferWindow(container, state);
             break;
         default:
             renderMainMenu(container, state);
@@ -215,6 +226,95 @@ function renderWaitingForPlayers(container, state) {
             </div>
         </div>
     `;
+}
+
+/**
+ * Team Name Selection Screen
+ */
+function renderTeamNameSelection(container, state) {
+    const myPlayer = state.players?.find(p => p.player_id === state.your_player_id);
+    const hasSetName = myPlayer?.has_set_team_name;
+
+    if (hasSetName) {
+        container.innerHTML = `
+            <div class="game-container">
+                <div class="game-header text-center">
+                    <h1>Team Name Set!</h1>
+                    <p class="text-secondary">Waiting for other player to name their team...</p>
+                </div>
+                <div class="game-content text-center">
+                    <div class="card">
+                        <div class="waiting-animation">
+                            <div class="spinner"></div>
+                        </div>
+                        <p class="mt-lg">Your team: <strong>${escapeHtml(myPlayer.team_name)}</strong></p>
+                    </div>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header text-center">
+                <h1>Create Your Team</h1>
+                <p class="text-secondary">Welcome to F1! Choose a name for your new racing team.</p>
+            </div>
+
+            <div class="game-content">
+                <div class="card team-name-card">
+                    <div class="team-name-intro">
+                        <h3>Your F1 Journey Begins</h3>
+                        <p>You're starting as a <strong>backmarker team</strong> - a new constructor entering Formula 1.</p>
+                        <p>Your car won't be competitive against the big teams yet, and top drivers won't be interested in joining you.</p>
+                        <p>But with smart management, good results, and car development, you can build your team's prestige and attract better talent!</p>
+                    </div>
+
+                    <div class="team-name-form mt-xl">
+                        <label for="team-name-input">Team Name</label>
+                        <input type="text" id="team-name-input" class="form-input" placeholder="Enter your team name (3-30 characters)" maxlength="30" />
+                        <p class="input-hint">Examples: "Velocity Racing", "Phoenix F1", "Apex Motorsport"</p>
+
+                        <button class="btn btn-primary btn-lg btn-block mt-lg" id="set-team-name-btn">
+                            Create Team
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Set team name handler
+    document.getElementById('set-team-name-btn')?.addEventListener('click', async () => {
+        const input = document.getElementById('team-name-input');
+        const teamName = input?.value?.trim();
+
+        if (!teamName || teamName.length < 3 || teamName.length > 30) {
+            showAlert(container.querySelector('.game-content'), 'Team name must be 3-30 characters', 'error');
+            return;
+        }
+
+        const btn = document.getElementById('set-team-name-btn');
+        setButtonLoading(btn, true);
+
+        try {
+            const newState = await api.post(`/gameplay/${state.game_id}/set-team-name`, {
+                team_name: teamName
+            });
+            renderGameScreen(container, newState);
+        } catch (error) {
+            showAlert(container.querySelector('.game-content'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
+
+    // Enter key handler
+    document.getElementById('team-name-input')?.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            document.getElementById('set-team-name-btn')?.click();
+        }
+    });
 }
 
 /**
@@ -349,6 +449,7 @@ function renderDriverSelection(container, state) {
                 ` : ''}
 
                 <h3>Available Drivers (${state.market_drivers?.length || 0})</h3>
+                <p class="text-secondary mb-md">Drivers will only join teams that match their prestige expectations. Build your reputation to attract better talent!</p>
                 <div class="card mt-md">
                     <div style="overflow-x: auto;">
                         <table class="driver-table">
@@ -359,6 +460,7 @@ function renderDriverSelection(container, state) {
                                     <th>Nat</th>
                                     <th>OVR</th>
                                     <th>POT</th>
+                                    <th>Interest</th>
                                     <th>PAC</th>
                                     <th>OVT</th>
                                     <th>DEF</th>
@@ -378,14 +480,21 @@ function renderDriverSelection(container, state) {
                                     const cantAfford = driver.market_value > budget;
                                     const wouldLeaveShort = driversNeeded > 1 && (budget - driver.market_value) < minCost;
                                     const isUnaffordable = cantAfford || wouldLeaveShort;
-                                    const cannotSign = !isYourTurn || isUnaffordable;
+                                    const notInterested = driver.interested === false;
+                                    const cannotSign = !isYourTurn || isUnaffordable || notInterested;
 
-                                    return `<tr class="${isUnaffordable ? 'unaffordable' : ''}">
+                                    return `<tr class="${isUnaffordable ? 'unaffordable' : ''} ${notInterested ? 'not-interested' : ''}">
                                         <td><strong>${escapeHtml(driver.name)}</strong></td>
                                         <td>${driver.age}</td>
                                         <td>${escapeHtml(driver.nationality.substring(0, 3).toUpperCase())}</td>
                                         <td><span class="stat-badge">${calculateOverall(driver.stats)}</span></td>
                                         <td><span class="stat-badge potential">${driver.potential}</span></td>
+                                        <td>
+                                            ${driver.interested !== false ?
+                                                `<span class="interest-badge interested" title="Willing to join your team">Interested</span>` :
+                                                `<span class="interest-badge not-interested" title="${escapeHtml(driver.interest_reason || 'Not interested')}">${escapeHtml(driver.interest_reason || 'Not interested')}</span>`
+                                            }
+                                        </td>
                                         <td>${driver.stats.pace}</td>
                                         <td>${driver.stats.overtaking}</td>
                                         <td>${driver.stats.defending}</td>
@@ -401,12 +510,12 @@ function renderDriverSelection(container, state) {
                                                     data-salary="${driver.salary}"
                                                     data-value="${driver.market_value}"
                                                     ${cannotSign ? 'disabled' : ''}
-                                                    title="${!isYourTurn ? 'Not your turn' : cantAfford ? 'Cannot afford' : wouldLeaveShort ? 'Not enough left for 2nd driver' : 'Sign driver'}">
-                                                ${!isYourTurn ? 'Wait' : cantAfford ? 'Too $$$' : wouldLeaveShort ? 'Need 2' : 'Sign'}
+                                                    title="${!isYourTurn ? 'Not your turn' : notInterested ? 'Driver not interested in joining' : cantAfford ? 'Cannot afford' : wouldLeaveShort ? 'Not enough left for 2nd driver' : 'Sign driver'}">
+                                                ${!isYourTurn ? 'Wait' : notInterested ? 'No' : cantAfford ? 'Too $$$' : wouldLeaveShort ? 'Need 2' : 'Sign'}
                                             </button>
                                         </td>
                                     </tr>`;
-                                }).join('') || '<tr><td colspan="14">No drivers available</td></tr>'}
+                                }).join('') || '<tr><td colspan="15">No drivers available</td></tr>'}
                             </tbody>
                         </table>
                     </div>
@@ -1937,6 +2046,218 @@ function renderSeasonEnd(container, state) {
             </div>
         </div>
     `;
+}
+
+/**
+ * Transfer Window Screen - End of season driver market
+ */
+function renderTransferWindow(container, state) {
+    const team = state.player_team;
+    const drivers = team?.drivers || [];
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <h1>Transfer Window</h1>
+                <p class="text-secondary">Season ${state.current_season} has ended. Manage your driver lineup for next season.</p>
+            </div>
+
+            <div class="game-content">
+                <!-- Team Status -->
+                <div class="card mb-lg">
+                    <div class="flex" style="justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--space-md);">
+                        <div>
+                            <h3>${escapeHtml(team?.name || 'Your Team')}</h3>
+                            <p class="text-secondary">Budget: <strong>$${team?.budget?.toFixed(1) || 0}M</strong></p>
+                        </div>
+                        <div class="team-stats">
+                            <span class="stat-pill">Car: ${calculateCarOverall(team?.car)}</span>
+                            <span class="stat-pill">Points: ${team?.season_points || 0}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Current Drivers -->
+                <div class="card mb-lg">
+                    <h3>Current Drivers</h3>
+                    <p class="text-secondary mb-md">You can release drivers to make room for new signings. You must keep at least 1 driver.</p>
+                    <div class="drivers-grid mt-md">
+                        ${drivers.map(driver => `
+                            <div class="driver-card">
+                                <div class="driver-card-header">
+                                    <div>
+                                        <h4>${escapeHtml(driver.name)}</h4>
+                                        <span class="driver-meta">${driver.age} yrs | ${escapeHtml(driver.nationality)}</span>
+                                    </div>
+                                    <span class="driver-overall">${calculateOverall(driver.stats)}</span>
+                                </div>
+                                <div class="driver-stats-mini">
+                                    <span class="stat-mini">PAC ${driver.stats.pace}</span>
+                                    <span class="stat-mini">OVT ${driver.stats.overtaking}</span>
+                                    <span class="stat-mini">DEF ${driver.stats.defending}</span>
+                                </div>
+                                <div class="driver-contract mt-sm">
+                                    <span class="text-secondary">Salary: $${driver.salary?.toFixed(1) || 0}M/yr</span>
+                                    ${driver.contract ? `<span class="text-secondary"> | ${driver.contract.years_remaining} yr${driver.contract.years_remaining !== 1 ? 's' : ''} left</span>` : ''}
+                                </div>
+                                ${drivers.length > 1 ? `
+                                    <button class="btn btn-danger btn-sm mt-md release-driver-btn" data-driver-id="${driver.id}" data-driver-name="${escapeHtml(driver.name)}">
+                                        Release Driver
+                                    </button>
+                                ` : '<p class="text-secondary mt-md text-xs">Cannot release last driver</p>'}
+                            </div>
+                        `).join('') || '<p class="text-secondary">No drivers signed</p>'}
+                    </div>
+                </div>
+
+                <!-- Available Drivers -->
+                ${drivers.length < 2 ? `
+                    <div class="card mb-lg">
+                        <h3>Available Drivers</h3>
+                        <p class="text-secondary mb-md">Your improved car and reputation may attract better drivers than before!</p>
+                        <div style="overflow-x: auto;">
+                            <table class="driver-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Age</th>
+                                        <th>Nat</th>
+                                        <th>OVR</th>
+                                        <th>POT</th>
+                                        <th>Interest</th>
+                                        <th>PAC</th>
+                                        <th>OVT</th>
+                                        <th>DEF</th>
+                                        <th>CON</th>
+                                        <th>TIR</th>
+                                        <th>WET</th>
+                                        <th>Value</th>
+                                        <th>Salary</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${state.market_drivers?.map(driver => {
+                                        const cantAfford = driver.market_value > (team?.budget || 0);
+                                        const notInterested = driver.interested === false;
+                                        const cannotSign = cantAfford || notInterested;
+
+                                        return `<tr class="${cantAfford ? 'unaffordable' : ''} ${notInterested ? 'not-interested' : ''}">
+                                            <td><strong>${escapeHtml(driver.name)}</strong></td>
+                                            <td>${driver.age}</td>
+                                            <td>${escapeHtml(driver.nationality.substring(0, 3).toUpperCase())}</td>
+                                            <td><span class="stat-badge">${calculateOverall(driver.stats)}</span></td>
+                                            <td><span class="stat-badge potential">${driver.potential}</span></td>
+                                            <td>
+                                                ${driver.interested !== false ?
+                                                    `<span class="interest-badge interested" title="Willing to join your team">Interested</span>` :
+                                                    `<span class="interest-badge not-interested" title="${escapeHtml(driver.interest_reason || 'Not interested')}">${escapeHtml(driver.interest_reason || 'Not interested')}</span>`
+                                                }
+                                            </td>
+                                            <td>${driver.stats.pace}</td>
+                                            <td>${driver.stats.overtaking}</td>
+                                            <td>${driver.stats.defending}</td>
+                                            <td>${driver.stats.consistency}</td>
+                                            <td>${driver.stats.tire_management}</td>
+                                            <td>${driver.stats.wet_skill}</td>
+                                            <td class="price-tag">$${driver.market_value?.toFixed(1)}M</td>
+                                            <td>$${driver.salary?.toFixed(1)}M</td>
+                                            <td>
+                                                <button class="btn ${cannotSign ? 'btn-secondary' : 'btn-primary'} btn-sm transfer-sign-btn"
+                                                        data-driver-id="${driver.id}"
+                                                        data-driver-name="${escapeHtml(driver.name)}"
+                                                        data-salary="${driver.salary}"
+                                                        data-value="${driver.market_value}"
+                                                        ${cannotSign ? 'disabled' : ''}
+                                                        title="${notInterested ? 'Driver not interested' : cantAfford ? 'Cannot afford' : 'Sign driver'}">
+                                                    ${notInterested ? 'No' : cantAfford ? 'Too $$$' : 'Sign'}
+                                                </button>
+                                            </td>
+                                        </tr>`;
+                                    }).join('') || '<tr><td colspan="15">No drivers available</td></tr>'}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                ` : `
+                    <div class="alert alert-info mb-lg">
+                        Your team is full (2 drivers). Release a driver to sign someone new.
+                    </div>
+                `}
+
+                <!-- Continue Button -->
+                <div class="text-center">
+                    <button class="btn btn-primary btn-lg skip-transfer-btn">
+                        ${drivers.length >= 2 ? 'Start Next Season' : 'Continue with Current Lineup'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Event listeners for releasing drivers
+    container.querySelectorAll('.release-driver-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const driverId = btn.dataset.driverId;
+            const driverName = btn.dataset.driverName;
+
+            if (confirm(`Release ${driverName}? This cannot be undone.`)) {
+                setButtonLoading(btn, true);
+                try {
+                    const newState = await api.post(`/gameplay/${state.game_id}/transfer-release-driver`, {
+                        driver_id: driverId
+                    });
+                    renderGameScreen(container, newState);
+                } catch (error) {
+                    showAlert(container.querySelector('.game-content'), error.message, 'error');
+                    setButtonLoading(btn, false);
+                }
+            }
+        });
+    });
+
+    // Event listeners for signing drivers
+    container.querySelectorAll('.transfer-sign-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const driverId = btn.dataset.driverId;
+            const driverName = btn.dataset.driverName;
+            const salary = parseFloat(btn.dataset.salary);
+
+            if (confirm(`Sign ${driverName} for $${salary.toFixed(1)}M/year?`)) {
+                setButtonLoading(btn, true);
+                try {
+                    const newState = await api.post(`/gameplay/${state.game_id}/transfer-sign-driver`, {
+                        driver_id: driverId,
+                        salary: salary,
+                        years: 2,
+                        is_number_one: false
+                    });
+                    renderGameScreen(container, newState);
+                } catch (error) {
+                    showAlert(container.querySelector('.game-content'), error.message, 'error');
+                    setButtonLoading(btn, false);
+                }
+            }
+        });
+    });
+
+    // Skip transfer window
+    container.querySelector('.skip-transfer-btn').addEventListener('click', async () => {
+        const btn = container.querySelector('.skip-transfer-btn');
+        if (drivers.length < 2) {
+            if (!confirm('You only have 1 driver. Are you sure you want to continue without signing another?')) {
+                return;
+            }
+        }
+        setButtonLoading(btn, true);
+        try {
+            const newState = await api.post(`/gameplay/${state.game_id}/skip-transfer-window`);
+            renderGameScreen(container, newState);
+        } catch (error) {
+            showAlert(container.querySelector('.game-content'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
 }
 
 // Helper functions

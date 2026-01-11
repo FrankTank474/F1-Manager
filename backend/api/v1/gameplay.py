@@ -7,7 +7,7 @@ from ...models.game_state import (
     GameStateResponse, GamePhase, TireCompound,
     TireSelectionRequest, SignDriverRequest, PitStopRequest,
     SelectSponsorRequest, UpgradeCarRequest, StartDevelopmentRequest,
-    ReleaseDriverRequest, ReadyRequest
+    ReleaseDriverRequest, ReadyRequest, SetTeamNameRequest
 )
 from ...models.auth import MessageResponse
 from ...services.game_state_service import game_state_manager, MultiplayerGameState
@@ -78,6 +78,27 @@ async def get_current_state(
 ):
     """Get current game state."""
     game_state = get_game_state(game_id, user_id)
+    return game_state.get_state_response(user_id)
+
+
+# ==================== TEAM NAME SELECTION ====================
+
+@router.post("/{game_id}/set-team-name", response_model=GameStateResponse)
+async def set_team_name(
+    game_id: str,
+    request: SetTeamNameRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Set the team name for the player."""
+    game_state = get_game_state(game_id, user_id)
+
+    if game_state.phase != GamePhase.TEAM_NAME_SELECTION:
+        raise HTTPException(status_code=400, detail="Not in team name selection phase")
+
+    success = game_state.set_team_name(user_id, request.team_name)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to set team name. Name must be 3-30 characters.")
+
     return game_state.get_state_response(user_id)
 
 
@@ -359,4 +380,67 @@ async def mark_message_read(
     game_state = get_game_state(game_id, user_id)
 
     game_state.mark_message_read(user_id, message_id)
+    return game_state.get_state_response(user_id)
+
+
+# ==================== TRANSFER WINDOW ====================
+
+@router.post("/{game_id}/transfer-sign-driver", response_model=GameStateResponse)
+async def transfer_sign_driver(
+    game_id: str,
+    request: SignDriverRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Sign a driver during the transfer window."""
+    game_state = get_game_state(game_id, user_id)
+
+    if game_state.phase != GamePhase.TRANSFER_WINDOW:
+        raise HTTPException(status_code=400, detail="Not in transfer window")
+
+    success = game_state.sign_driver_transfer(
+        user_id,
+        request.driver_id,
+        request.salary,
+        request.years
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to sign driver - not interested, too expensive, or team full")
+
+    return game_state.get_state_response(user_id)
+
+
+@router.post("/{game_id}/transfer-release-driver", response_model=GameStateResponse)
+async def transfer_release_driver(
+    game_id: str,
+    request: ReleaseDriverRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Release a driver during the transfer window."""
+    game_state = get_game_state(game_id, user_id)
+
+    if game_state.phase != GamePhase.TRANSFER_WINDOW:
+        raise HTTPException(status_code=400, detail="Not in transfer window")
+
+    success = game_state.release_driver_transfer(user_id, request.driver_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to release driver - must keep at least one driver")
+
+    return game_state.get_state_response(user_id)
+
+
+@router.post("/{game_id}/skip-transfer-window", response_model=GameStateResponse)
+async def skip_transfer_window(
+    game_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Skip the transfer window and start the next season."""
+    game_state = get_game_state(game_id, user_id)
+
+    if game_state.phase != GamePhase.TRANSFER_WINDOW:
+        raise HTTPException(status_code=400, detail="Not in transfer window")
+
+    success = game_state.skip_transfer_window(user_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to skip transfer window")
+
     return game_state.get_state_response(user_id)

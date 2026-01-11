@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 class GamePhase(str, Enum):
     """Current phase of the game."""
     WAITING_FOR_PLAYERS = "waiting_for_players"  # Waiting for 2nd player
+    TEAM_NAME_SELECTION = "team_name_selection"  # Choose team name
     SPONSOR_SELECTION = "sponsor_selection"  # Each player selects sponsor
     TEAM_SETUP = "team_setup"  # Initial driver selection (alternating turns)
     MAIN_MENU = "main_menu"  # Between races - team management
@@ -18,6 +19,7 @@ class GamePhase(str, Enum):
     RACE_IN_PROGRESS = "race_in_progress"
     RACE_RESULTS = "race_results"
     SEASON_END = "season_end"
+    TRANSFER_WINDOW = "transfer_window"  # End of season driver transfers
 
 
 class TireCompound(str, Enum):
@@ -156,6 +158,11 @@ class MarketDriver(BaseModel):
     potential: int
     current_team: Optional[str] = None  # If contracted
     is_free_agent: bool = True
+
+    # Signing interest system
+    min_team_prestige: int = 0  # Minimum team prestige required (0-100)
+    interested: bool = True  # Would they join this team?
+    interest_reason: str = ""  # Why interested or not
 
 
 # ==================== CAR MODELS ====================
@@ -413,6 +420,7 @@ class PlayerState(BaseModel):
     username: str
     team_name: str
     is_ready: bool = False  # Ready to proceed
+    has_set_team_name: bool = False
     has_selected_sponsor: bool = False
     has_selected_tires: bool = False
     drivers_signed: int = 0
@@ -539,3 +547,8 @@ class NegotiateContractRequest(BaseModel):
 class ReadyRequest(BaseModel):
     """Mark player as ready to proceed."""
     ready: bool = True
+
+
+class SetTeamNameRequest(BaseModel):
+    """Request to set team name."""
+    team_name: str

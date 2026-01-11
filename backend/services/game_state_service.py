@@ -336,6 +336,11 @@ class MultiplayerGameState:
             stats = d.get("stats", d)
             if isinstance(stats, dict) and "pace" in stats:
                 overall = calc_overall(stats)
+                # Calculate minimum team prestige based on driver quality
+                # Top drivers (85+) want top teams, mid drivers (70-84) want midfield+
+                # Lower drivers (below 70) will consider any team
+                min_prestige = self._calculate_driver_min_prestige(overall, d["age"])
+
                 driver = {
                     "id": str(i),
                     "name": d["name"],
@@ -356,18 +361,68 @@ class MultiplayerGameState:
                     "contract_years": 2 if d.get("team_name") else 0,
                     "is_number_one": False,
                     "player_id": None,
+                    "min_team_prestige": min_prestige,  # Minimum team prestige to sign
+                    "career_races": random.randint(0, 200) if overall > 75 else random.randint(0, 50),
                 }
                 self._all_drivers.append(driver)
 
+    def _calculate_driver_min_prestige(self, overall: int, age: int) -> int:
+        """Calculate minimum team prestige a driver requires based on their quality."""
+        # Base prestige requirement from skill
+        if overall >= 90:
+            base = 85  # Elite drivers only want top teams
+        elif overall >= 85:
+            base = 75  # Very good drivers want competitive teams
+        elif overall >= 80:
+            base = 60  # Good drivers want midfield or better
+        elif overall >= 75:
+            base = 45  # Decent drivers want decent teams
+        elif overall >= 70:
+            base = 30  # Average drivers are more flexible
+        elif overall >= 65:
+            base = 15  # Below average will take most opportunities
+        else:
+            base = 0  # Rookies/low-rated will take any seat
+
+        # Age modifier - older drivers may be more willing to take a lower seat
+        # Younger drivers in their prime want better seats
+        if age <= 22:
+            base -= 15  # Young talents willing to prove themselves
+        elif age <= 25:
+            base -= 5  # Still developing
+        elif age >= 35:
+            base -= 20  # Older drivers more flexible for final years
+        elif age >= 32:
+            base -= 10  # Veterans may accept less
+
+        return max(0, min(95, base))
+
     def _setup_ai_teams(self):
         """Set up AI team data."""
+        # Budget ranges by team tier
+        team_budgets = {
+            "Red Bull Racing": (180, 220),
+            "Mercedes": (170, 210),
+            "Ferrari": (170, 210),
+            "McLaren": (140, 180),
+            "Aston Martin": (130, 170),
+            "Alpine": (100, 140),
+            "Williams": (80, 120),
+            "Sauber": (75, 115),
+            "Haas": (70, 110),
+            "RB": (90, 130),
+        }
         for team_name, car_stats in AI_TEAM_CARS.items():
+            budget_range = team_budgets.get(team_name, (80, 120))
             self._ai_teams[team_name] = {
                 "name": team_name,
                 "car": car_stats.copy(),
-                "budget": random.uniform(80, 150),
+                "budget": random.uniform(*budget_range),
                 "season_points": 0,
                 "race_wins": 0,
+                "podiums": 0,
+                "upgrade_budget": 0,  # Money set aside for upgrades
+                "reputation": calc_car_overall(car_stats),  # AI reputation = car quality
             }
 
     def _load_tracks(self):
@@ -403,12 +458,14 @@ class MultiplayerGameState:
         if player_id in self.players:
             return True  # Already in game
 
-        team_name = f"{username} Racing"
+        # Default team name (will be customized)
+        default_team_name = f"{username} Racing"
         self.players[player_id] = {
             "player_id": player_id,
             "username": username,
-            "team_name": team_name,
+            "team_name": default_team_name,
             "is_ready": False,
+            "has_set_team_name": False,
             "has_selected_sponsor": False,
             "has_selected_tires": False,
             "drivers_signed": 0,
@@ -417,30 +474,87 @@ class MultiplayerGameState:
         self.players_ready[player_id] = False
         self.inboxes[player_id] = []
 
-        # Create player team
+        # Create player team with backmarker-level car
         self.player_teams[player_id] = {
             "id": player_id,
-            "name": team_name,
+            "name": default_team_name,
             "budget": 50.0,
-            "car": {"downforce": 65, "aero_efficiency": 65, "chassis": 65,
-                    "power_unit": 65, "reliability": 70, "tire_cooling": 65},
+            # Backmarker car stats - starting from the back of the grid
+            "car": {"downforce": 62, "aero_efficiency": 60, "chassis": 63,
+                    "power_unit": 61, "reliability": 68, "tire_cooling": 60},
             "drivers": [],
             "season_points": 0,
             "race_wins": 0,
+            "podiums": 0,
             "player_id": player_id,
             "sponsor": None,
             "development_tree": self._create_player_dev_tree(),
+            "reputation": 20,  # Starting reputation as a new team
+            "seasons_completed": 0,
         }
 
         # Generate sponsors for this player
         self.available_sponsors[player_id] = self._generate_sponsors()
 
-        # If we have 2 players, start the game
+        # If we have 2 players, start with team name selection
         if len(self.players) == 2:
-            self.phase = GamePhase.SPONSOR_SELECTION
-            self._add_inbox_message_all("Game Started", "Welcome! 2 players have joined. Select your sponsor to begin.", MessageType.TEAM_UPDATE)
+            self.phase = GamePhase.TEAM_NAME_SELECTION
+            self._add_inbox_message_all("Game Started", "Welcome! Choose your team name to begin your F1 journey.", MessageType.TEAM_UPDATE)
 
         return True
+
+    def set_team_name(self, player_id: str, team_name: str) -> bool:
+        """Set the player's team name."""
+        if player_id not in self.players:
+            return False
+        if self.phase != GamePhase.TEAM_NAME_SELECTION:
+            return False
+
+        # Validate team name
+        team_name = team_name.strip()
+        if len(team_name) < 3 or len(team_name) > 30:
+            return False
+
+        # Update player and team
+        self.players[player_id]["team_name"] = team_name
+        self.players[player_id]["has_set_team_name"] = True
+        self.player_teams[player_id]["name"] = team_name
+
+        self._add_inbox_message(player_id, "Team Created",
+            f"Welcome to F1! {team_name} is now officially registered. "
+            f"As a new team, you'll need to prove yourself before top drivers will consider joining.",
+            MessageType.TEAM_UPDATE)
+
+        # Check if all players have set their team names
+        if all(p["has_set_team_name"] for p in self.players.values()):
+            self.phase = GamePhase.SPONSOR_SELECTION
+
+        return True
+
+    def get_team_prestige(self, player_id: str) -> int:
+        """Calculate team prestige for driver signing interest."""
+        if player_id not in self.player_teams:
+            return 0
+
+        team = self.player_teams[player_id]
+        car = team["car"]
+
+        # Car quality (40% of prestige)
+        car_overall = calc_car_overall(car)
+        car_score = (car_overall / 100) * 40
+
+        # Budget (20% of prestige)
+        budget_score = min(20, (team["budget"] / 200) * 20)
+
+        # Reputation/Results (30% of prestige)
+        reputation = team.get("reputation", 20)
+        rep_score = (reputation / 100) * 30
+
+        # Seasons completed (10% of prestige) - experience matters
+        seasons = team.get("seasons_completed", 0)
+        season_score = min(10, seasons * 2)
+
+        return int(car_score + budget_score + rep_score + season_score)
 
     def _create_player_dev_tree(self) -> Dict:
         """Create a fresh development tree for a player."""
@@ -515,19 +629,46 @@ class MultiplayerGameState:
 
     # ==================== DRIVER SIGNING ====================
 
-    def get_available_drivers(self, player_id: str) -> List[Dict]:
-        """Get drivers available for signing."""
+    def get_available_drivers(self, player_id: str, include_uninterested: bool = True) -> List[Dict]:
+        """Get drivers available for signing with interest information."""
         signed_ids = set()
         for team in self.player_teams.values():
             for d in team["drivers"]:
                 signed_ids.add(d["id"])
 
+        team_prestige = self.get_team_prestige(player_id)
+
         available = []
         for d in self._all_drivers:
             if d["id"] not in signed_ids:
-                available.append(d)
-        available.sort(key=lambda x: x["market_value"], reverse=True)
+                driver_copy = d.copy()
+                min_prestige = d.get("min_team_prestige", 0)
+
+                # Check if driver would be interested
+                if team_prestige >= min_prestige:
+                    driver_copy["interested"] = True
+                    driver_copy["interest_reason"] = "Interested in joining your team"
+                else:
+                    driver_copy["interested"] = False
+                    prestige_gap = min_prestige - team_prestige
+                    if prestige_gap > 40:
+                        driver_copy["interest_reason"] = "Would never consider joining a backmarker team"
+                    elif prestige_gap > 25:
+                        driver_copy["interest_reason"] = "Looking for a more competitive seat"
+                    elif prestige_gap > 10:
+                        driver_copy["interest_reason"] = "Wants a team with better prospects"
+                    else:
+                        driver_copy["interest_reason"] = "Considering other offers first"
+
+                if include_uninterested or driver_copy["interested"]:
+                    available.append(driver_copy)
+
+        available.sort(key=lambda x: (x["interested"], x["market_value"]), reverse=True)
         return available
+
+    def get_interested_drivers(self, player_id: str) -> List[Dict]:
+        """Get only drivers who would join this team."""
+        return self.get_available_drivers(player_id, include_uninterested=False)
 
     def get_min_driver_cost(self, player_id: str, exclude_id: str = None) -> float:
         """Get minimum cost of available drivers."""
@@ -559,6 +700,12 @@ class MultiplayerGameState:
         driver = next((d for d in self._all_drivers if d["id"] == driver_id), None)
         if not driver:
             return False
+
+        # Check if driver is interested in joining this team
+        team_prestige = self.get_team_prestige(player_id)
+        min_prestige = driver.get("min_team_prestige", 0)
+        if team_prestige < min_prestige:
+            return False  # Driver not interested
 
         # Check affordability
         if driver["market_value"] > team["budget"]:
@@ -1557,6 +1704,12 @@ class MultiplayerGameState:
         for pid in self.players:
             self._process_developments(pid)
 
+        # Update player team reputation based on results
+        self._update_team_reputations()
+
+        # AI teams get prize money and upgrades
+        self._process_ai_teams_race_end()
+
         # Rotate turn order for fairness
         self._rotate_turn_order()
 
@@ -1574,6 +1727,198 @@ class MultiplayerGameState:
         elif obj_type == "win":
             return best_finish == 1
         return False
+
+    def _update_team_reputations(self):
+        """Update team reputations based on race results."""
+        for pid, team in self.player_teams.items():
+            # Find best finish this race
+            best_finish = 99
+            for entry in self.race_entries:
+                if entry["player_id"] == pid and not entry["dnf"]:
+                    best_finish = min(best_finish, entry["position"])
+
+            # Reputation changes based on performance
+            rep_change = 0
+            if best_finish == 1:
+                rep_change = 5  # Win = big reputation boost
+            elif best_finish <= 3:
+                rep_change = 3  # Podium
+            elif best_finish <= 6:
+                rep_change = 2  # Strong points
+            elif best_finish <= 10:
+                rep_change = 1  # Points finish
+            elif best_finish <= 15:
+                rep_change = 0  # Mid-pack
+            else:
+                rep_change = -1  # Poor finish
+
+            team["reputation"] = max(10, min(100, team.get("reputation", 20) + rep_change))
+
+            # Also update podiums counter
+            for entry in self.race_entries:
+                if entry["player_id"] == pid and not entry["dnf"] and entry["position"] <= 3:
+                    team["podiums"] = team.get("podiums", 0) + 1
+
+    def _process_ai_teams_race_end(self):
+        """Process AI teams after a race - prize money and upgrades."""
+        # Award prize money to AI teams
+        for entry in self.race_entries:
+            if not entry["player_id"] and not entry["dnf"]:
+                team_name = entry["team_name"]
+                if team_name in self._ai_teams:
+                    ai_team = self._ai_teams[team_name]
+                    pos = entry["position"]
+
+                    # Prize money
+                    prize = RACE_PRIZE_MONEY.get(pos, 0.25)
+                    ai_team["budget"] += prize
+                    ai_team["upgrade_budget"] += prize * 0.5  # Half goes to upgrade fund
+
+                    # Track wins and podiums
+                    if pos == 1:
+                        ai_team["race_wins"] += 1
+                    if pos <= 3:
+                        ai_team["podiums"] = ai_team.get("podiums", 0) + 1
+
+                    # Update season points
+                    pts = POINTS_SYSTEM.get(pos, 0)
+                    ai_team["season_points"] += pts
+
+        # AI teams decide to upgrade (every few races or when they have enough budget)
+        if self.current_race % 3 == 0:  # Every 3 races
+            self._ai_teams_upgrade()
+
+    def _ai_teams_upgrade(self):
+        """AI teams spend their upgrade budgets."""
+        for team_name, ai_team in self._ai_teams.items():
+            upgrade_budget = ai_team.get("upgrade_budget", 0)
+
+            # Only upgrade if enough budget
+            if upgrade_budget < 5:
+                continue
+
+            car = ai_team["car"]
+
+            # Find weakest stat to upgrade
+            stats = ["downforce", "aero_efficiency", "chassis", "power_unit", "reliability", "tire_cooling"]
+            weakest_stat = min(stats, key=lambda s: car[s])
+            current_value = car[weakest_stat]
+
+            # Get upgrade cost
+            cost = get_upgrade_cost(current_value)
+
+            # Perform upgrades while affordable
+            upgrades_done = 0
+            while upgrade_budget >= cost and current_value < 98 and upgrades_done < 3:
+                car[weakest_stat] = current_value + 1
+                upgrade_budget -= cost
+                current_value = car[weakest_stat]
+                cost = get_upgrade_cost(current_value)
+                upgrades_done += 1
+
+                # Maybe switch to another weak stat
+                if upgrades_done >= 2:
+                    weakest_stat = min(stats, key=lambda s: car[s])
+                    current_value = car[weakest_stat]
+                    cost = get_upgrade_cost(current_value)
+
+            ai_team["upgrade_budget"] = upgrade_budget
+
+            # Update AI team reputation based on car quality
+            ai_team["reputation"] = calc_car_overall(car)
+
+    def _process_driver_growth(self):
+        """Process driver stat growth/decline at season end."""
+        for driver in self._all_drivers:
+            age = driver["age"]
+            overall = driver["overall"]
+            stats = driver["stats"]
+
+            # Determine growth potential based on age
+            if age <= 22:
+                # Young talents - high growth potential
+                growth_chance = 0.9
+                max_growth = 4
+                decline_chance = 0.05
+            elif age <= 25:
+                # Developing - good growth
+                growth_chance = 0.75
+                max_growth = 3
+                decline_chance = 0.1
+            elif age <= 28:
+                # Prime - moderate growth
+                growth_chance = 0.5
+                max_growth = 2
+                decline_chance = 0.15
+            elif age <= 32:
+                # Late prime - stable/slight decline
+                growth_chance = 0.25
+                max_growth = 1
+                decline_chance = 0.3
+            elif age <= 35:
+                # Veteran - mostly decline
+                growth_chance = 0.1
+                max_growth = 1
+                decline_chance = 0.5
+            else:
+                # Old - decline
+                growth_chance = 0.05
+                max_growth = 1
+                decline_chance = 0.7
+
+            # Performance modifier - good results increase growth
+            performance_mod = 0
+            if driver.get("race_wins", 0) > 0:
+                performance_mod = 0.2
+            elif driver.get("podiums", 0) > 0:
+                performance_mod = 0.1
+            elif driver.get("season_points", 0) > 30:
+                performance_mod = 0.05
+
+            growth_chance = min(1.0, growth_chance + performance_mod)
+
+            # Apply growth or decline to each stat
+            stat_names = ["pace", "overtaking", "defending", "consistency", "tire_management", "wet_skill"]
+            for stat_name in stat_names:
+                current = stats[stat_name]
+
+                if random.random() < growth_chance:
+                    # Growth
+                    growth = random.randint(1, max_growth)
+                    # Limit growth near ceiling
+                    if current >= 90:
+                        growth = min(growth, 1)
+                    if current >= 95:
+                        growth = 0
+                    stats[stat_name] = min(99, current + growth)
+                elif random.random() < decline_chance:
+                    # Decline
+                    decline = random.randint(1, 2)
+                    stats[stat_name] = max(40, current - decline)
+
+            # Update overall
+            driver["overall"] = calc_overall(stats)
+
+            # Age the driver
+            driver["age"] += 1
+
+            # Update potential based on new age/overall
+            driver["potential"] = calc_potential(driver["age"], driver["overall"])
+
+            # Update minimum prestige requirement
+            driver["min_team_prestige"] = self._calculate_driver_min_prestige(driver["overall"], driver["age"])
+
+            # Reset season stats
+            driver["season_points"] = 0
+            driver["race_wins"] = 0
+            driver["podiums"] = 0
+            driver["dnfs"] = 0
+
+            # Contract handling
+            if driver.get("contract_years", 0) > 0:
+                driver["contract_years"] -= 1
+                if driver["contract_years"] <= 0:
+                    driver["is_free_agent"] = True
 
     def advance_to_next_race(self, player_id: str) -> bool:
         """Move to next race."""
@@ -1602,7 +1947,7 @@ class MultiplayerGameState:
 
     def _end_season(self):
         """End of season processing."""
-        # Award prize money
+        # Award prize money to player teams
         for pid, team in self.player_teams.items():
             pos = next((cs["position"] for cs in self._constructor_standings if cs["team_name"] == team["name"]), 11)
             prize = SEASON_PRIZE_MONEY.get(pos, 25)
@@ -1615,6 +1960,166 @@ class MultiplayerGameState:
                 self._add_inbox_message(pid, "Sponsor Bonus",
                     f"Congratulations! You've met your sponsor objectives. Bonus: ${sponsor['season_bonus']}M!",
                     MessageType.ACHIEVEMENT, MessagePriority.IMPORTANT)
+
+            # Increment seasons completed
+            team["seasons_completed"] = team.get("seasons_completed", 0) + 1
+
+            # Generate season summary message
+            team_pos = pos
+            driver_names = [d["name"] for d in team["drivers"]]
+            self._add_inbox_message(pid, f"Season {self.current_season} Complete",
+                f"Your team finished P{team_pos} in the Constructors' Championship!\n\n"
+                f"Drivers: {', '.join(driver_names)}\n"
+                f"Season Prize: ${prize}M\n"
+                f"Your car and reputation have improved. Better drivers may now be interested!",
+                MessageType.TEAM_UPDATE, MessagePriority.IMPORTANT)
+
+        # Award prize money to AI teams
+        for cs in self._constructor_standings:
+            team_name = cs["team_name"]
+            if team_name in self._ai_teams:
+                pos = cs["position"]
+                prize = SEASON_PRIZE_MONEY.get(pos, 25)
+                self._ai_teams[team_name]["budget"] += prize
+
+        # Process driver growth/decline for ALL drivers
+        self._process_driver_growth()
+
+        # Process AI team upgrades at season end (big upgrade session)
+        for _ in range(3):  # Multiple upgrade rounds
+            self._ai_teams_upgrade()
+
+        # Go to transfer window phase
+        self.phase = GamePhase.TRANSFER_WINDOW
+        self.reset_ready()
+
+        # Notify players about transfer window
+        for pid in self.players:
+            team = self.player_teams[pid]
+            prestige = self.get_team_prestige(pid)
+            self._add_inbox_message(pid, "Transfer Window Open",
+                f"The transfer window is now open! Your team prestige is {prestige}/100.\n\n"
+                f"You can now sign new drivers. Higher prestige attracts better talent.\n"
+                f"Budget available: ${team['budget']:.1f}M",
+                MessageType.TEAM_UPDATE, MessagePriority.URGENT)
+
+    def skip_transfer_window(self, player_id: str) -> bool:
+        """Skip the transfer window and start next season."""
+        if self.phase != GamePhase.TRANSFER_WINDOW:
+            return False
+
+        if len(self.players) == 2 and not self.all_players_ready():
+            self.mark_ready(player_id, True)
+            if not self.all_players_ready():
+                return True  # Waiting for other player
+
+        self._start_new_season()
+        return True
+
+    def sign_driver_transfer(self, player_id: str, driver_id: str, salary: float, years: int) -> bool:
+        """Sign a driver during transfer window (can replace existing driver)."""
+        if self.phase != GamePhase.TRANSFER_WINDOW:
+            return False
+
+        if player_id not in self.player_teams:
+            return False
+
+        team = self.player_teams[player_id]
+        driver = next((d for d in self._all_drivers if d["id"] == driver_id), None)
+        if not driver:
+            return False
+
+        # Check if driver is interested
+        team_prestige = self.get_team_prestige(player_id)
+        min_prestige = driver.get("min_team_prestige", 0)
+        if team_prestige < min_prestige:
+            return False
+
+        # Check affordability
+        if driver["market_value"] > team["budget"]:
+            return False
+
+        # If team already has 2 drivers, must release one first
+        if len(team["drivers"]) >= 2:
+            return False
+
+        # Sign the driver
+        team["budget"] -= driver["market_value"]
+        driver["team_name"] = team["name"]
+        driver["player_id"] = player_id
+        driver["contract_years"] = years
+        driver["is_free_agent"] = False
+        team["drivers"].append(driver)
+
+        self._add_inbox_message(player_id, "Driver Signed",
+            f"{driver['name']} has joined your team! Contract: {years} years at ${salary}M/year.",
+            MessageType.TEAM_UPDATE)
+
+        return True
+
+    def release_driver_transfer(self, player_id: str, driver_id: str) -> bool:
+        """Release a driver during transfer window."""
+        if self.phase != GamePhase.TRANSFER_WINDOW:
+            return False
+
+        if player_id not in self.player_teams:
+            return False
+
+        team = self.player_teams[player_id]
+
+        # Can't release if only 1 driver
+        if len(team["drivers"]) <= 1:
+            return False
+
+        driver = next((d for d in team["drivers"] if d["id"] == driver_id), None)
+        if not driver:
+            return False
+
+        # Release the driver
+        team["drivers"].remove(driver)
+        driver["team_name"] = None
+        driver["player_id"] = None
+        driver["is_free_agent"] = True
+
+        self._add_inbox_message(player_id, "Driver Released",
+            f"{driver['name']} has been released from your team. They are now a free agent.",
+            MessageType.TEAM_UPDATE)
+
+        return True
+
+    def _start_new_season(self):
+        """Start a new season after transfer window."""
+        self.current_season += 1
+        self.current_race = 1
+        self.phase = GamePhase.MAIN_MENU
+        self.reset_ready()
+
+        # Reset season stats
+        for team in self.player_teams.values():
+            team["season_points"] = 0
+            team["race_wins"] = 0
+            team["podiums"] = 0
+
+        for ai_team in self._ai_teams.values():
+            ai_team["season_points"] = 0
+            ai_team["race_wins"] = 0
+            ai_team["podiums"] = 0
+
+        # Re-initialize standings
+        self._initialize_standings()
+
+        # Clear race state
+        self.qualifying_results = []
+        self.race_entries = []
+        self.race_events = []
+        self.player_tire_selections = {}
+
+        # Notify players
+        for pid in self.players:
+            self._add_inbox_message(pid, f"Season {self.current_season} Begins",
+                f"Welcome to Season {self.current_season}! The championship starts fresh.\n"
+                f"Good luck this season!",
+                MessageType.TEAM_UPDATE, MessagePriority.IMPORTANT)
 
     def _initialize_standings(self):
         """Initialize championship standings."""
@@ -1712,6 +2217,7 @@ class MultiplayerGameState:
                 username=p["username"],
                 team_name=p["team_name"],
                 is_ready=self.players_ready.get(p["player_id"], False),
+                has_set_team_name=p.get("has_set_team_name", False),
                 has_selected_sponsor=p["has_selected_sponsor"],
                 has_selected_tires=p.get("has_selected_tires", False),
                 drivers_signed=p["drivers_signed"]
@@ -1857,7 +2363,7 @@ class MultiplayerGameState:
 
         # Market drivers
         market_drivers = []
-        if self.phase == GamePhase.TEAM_SETUP:
+        if self.phase in [GamePhase.TEAM_SETUP, GamePhase.TRANSFER_WINDOW]:
             for d in self.get_available_drivers(player_id):
                 market_drivers.append(MarketDriver(
                     id=d["id"], name=d["name"], age=d["age"],
@@ -1867,7 +2373,10 @@ class MultiplayerGameState:
                     salary=d["salary"],
                     potential=d["potential"],
                     current_team=d.get("original_team"),
-                    is_free_agent=d.get("is_free_agent", True)
+                    is_free_agent=d.get("is_free_agent", True),
+                    min_team_prestige=d.get("min_team_prestige", 0),
+                    interested=d.get("interested", True),
+                    interest_reason=d.get("interest_reason", "")
                 ))
 
         # Available sponsors

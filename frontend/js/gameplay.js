@@ -10,7 +10,19 @@ const GamePhase = {
     TEAM_SETUP: 'team_setup',
     MAIN_MENU: 'main_menu',
     RACE_WEEKEND: 'race_weekend',
+    // Qualifying stages
     QUALIFYING: 'qualifying',
+    QUALIFYING_Q1: 'qualifying_q1',
+    QUALIFYING_Q2: 'qualifying_q2',
+    QUALIFYING_Q3: 'qualifying_q3',
+    // Sprint weekend phases
+    SPRINT_SHOOTOUT_Q1: 'sprint_shootout_q1',
+    SPRINT_SHOOTOUT_Q2: 'sprint_shootout_q2',
+    SPRINT_SHOOTOUT_Q3: 'sprint_shootout_q3',
+    SPRINT_GRID: 'sprint_grid',
+    SPRINT_RACE: 'sprint_race',
+    SPRINT_RESULTS: 'sprint_results',
+    // Race phases
     TIRE_SELECTION: 'tire_selection',
     RACE_IN_PROGRESS: 'race_in_progress',
     RACE_RESULTS: 'race_results',
@@ -184,7 +196,32 @@ function renderGameScreen(container, state) {
             renderMainMenu(container, state);
             break;
         case GamePhase.QUALIFYING:
-            renderQualifying(container, state);
+        case GamePhase.QUALIFYING_Q1:
+            renderQualifyingQ1(container, state);
+            break;
+        case GamePhase.QUALIFYING_Q2:
+            renderQualifyingQ2(container, state);
+            break;
+        case GamePhase.QUALIFYING_Q3:
+            renderQualifyingQ3(container, state);
+            break;
+        case GamePhase.SPRINT_SHOOTOUT_Q1:
+            renderSprintShootoutQ1(container, state);
+            break;
+        case GamePhase.SPRINT_SHOOTOUT_Q2:
+            renderSprintShootoutQ2(container, state);
+            break;
+        case GamePhase.SPRINT_SHOOTOUT_Q3:
+            renderSprintShootoutQ3(container, state);
+            break;
+        case GamePhase.SPRINT_GRID:
+            renderSprintGrid(container, state);
+            break;
+        case GamePhase.SPRINT_RACE:
+            renderSprintRace(container, state);
+            break;
+        case GamePhase.SPRINT_RESULTS:
+            renderSprintResults(container, state);
             break;
         case GamePhase.TIRE_SELECTION:
             renderTireSelection(container, state);
@@ -1056,9 +1093,348 @@ function formatMessageTime(timestamp) {
 }
 
 /**
- * Qualifying Screen - With sync for multiplayer
+ * Q1 Qualifying Screen - All 20 drivers, bottom 5 eliminated
  */
-function renderQualifying(container, state) {
+function renderQualifyingQ1(container, state) {
+    const isMultiplayer = state.is_multiplayer;
+    const myPlayer = state.players?.find(p => p.player_id === state.your_player_id);
+    const otherPlayer = state.players?.find(p => p.player_id !== state.your_player_id);
+    const imReady = myPlayer?.is_ready;
+    const opponentReady = otherPlayer?.is_ready;
+    const bothReady = isMultiplayer ? (imReady && opponentReady) : true;
+    const isSprintWeekend = state.current_track?.is_sprint_weekend;
+
+    // Q1 results - positions 1-20, bottom 5 (16-20) are eliminated
+    const q1Results = state.qualifying_results || [];
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <h1>Q1 Results</h1>
+                <p class="text-secondary">${escapeHtml(state.current_track?.name || 'Unknown Track')}${isSprintWeekend ? ' - Sprint Weekend' : ''}</p>
+                <div class="quali-stage-indicator">
+                    <span class="quali-stage active">Q1</span>
+                    <span class="quali-stage">Q2</span>
+                    <span class="quali-stage">Q3</span>
+                </div>
+            </div>
+
+            <div class="game-content">
+                <div class="quali-info-bar mb-md">
+                    <span class="quali-info">Bottom 5 drivers eliminated (P16-P20)</span>
+                </div>
+
+                <div class="card">
+                    <table class="results-table quali-table">
+                        <thead>
+                            <tr>
+                                <th>Pos</th>
+                                <th>Driver</th>
+                                <th>Team</th>
+                                <th>Q1 Time</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${q1Results.map((result, idx) => {
+                                const isEliminated = result.position >= 16 || result.eliminated_in === 'Q1';
+                                return `
+                                    <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''} ${isEliminated ? 'eliminated-row' : ''}">
+                                        <td class="pos-cell">${result.position}</td>
+                                        <td>${escapeHtml(result.driver_name)}</td>
+                                        <td>${escapeHtml(result.team_name)}</td>
+                                        <td class="time-cell">${result.q1_time || result.lap_time}</td>
+                                        <td>${isEliminated ? '<span class="status-eliminated">OUT</span>' : '<span class="status-through">Q2</span>'}</td>
+                                    </tr>
+                                `;
+                            }).join('') || '<tr><td colspan="5">No results</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+
+                ${renderMultiplayerSyncUI(state, isMultiplayer, imReady, opponentReady, bothReady, 'Continue to Q2', 'advance-qualifying')}
+            </div>
+        </div>
+    `;
+
+    attachQualifyingListeners(container, state, isMultiplayer, imReady);
+}
+
+/**
+ * Q2 Qualifying Screen - Top 15 drivers, bottom 5 eliminated
+ */
+function renderQualifyingQ2(container, state) {
+    const isMultiplayer = state.is_multiplayer;
+    const myPlayer = state.players?.find(p => p.player_id === state.your_player_id);
+    const otherPlayer = state.players?.find(p => p.player_id !== state.your_player_id);
+    const imReady = myPlayer?.is_ready;
+    const opponentReady = otherPlayer?.is_ready;
+    const bothReady = isMultiplayer ? (imReady && opponentReady) : true;
+    const isSprintWeekend = state.current_track?.is_sprint_weekend;
+
+    // Q2 results - positions 1-15, bottom 5 (11-15) are eliminated
+    const q2Results = (state.qualifying_results || []).filter(r => !r.eliminated_in || r.eliminated_in !== 'Q1');
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <h1>Q2 Results</h1>
+                <p class="text-secondary">${escapeHtml(state.current_track?.name || 'Unknown Track')}${isSprintWeekend ? ' - Sprint Weekend' : ''}</p>
+                <div class="quali-stage-indicator">
+                    <span class="quali-stage completed">Q1</span>
+                    <span class="quali-stage active">Q2</span>
+                    <span class="quali-stage">Q3</span>
+                </div>
+            </div>
+
+            <div class="game-content">
+                <div class="quali-info-bar mb-md">
+                    <span class="quali-info">Top 10 advance to Q3 | Bottom 5 eliminated (P11-P15)</span>
+                    <span class="quali-info tire-info">Top 10 must start race on Q2 tires!</span>
+                </div>
+
+                <div class="card">
+                    <table class="results-table quali-table">
+                        <thead>
+                            <tr>
+                                <th>Pos</th>
+                                <th>Driver</th>
+                                <th>Team</th>
+                                <th>Q2 Time</th>
+                                <th>Tire</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${q2Results.map((result, idx) => {
+                                const q2Position = idx + 1;
+                                const isEliminated = q2Position >= 11 || result.eliminated_in === 'Q2';
+                                return `
+                                    <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''} ${isEliminated ? 'eliminated-row' : ''}">
+                                        <td class="pos-cell">${q2Position}</td>
+                                        <td>${escapeHtml(result.driver_name)}</td>
+                                        <td>${escapeHtml(result.team_name)}</td>
+                                        <td class="time-cell">${result.q2_time || result.lap_time}</td>
+                                        <td>${result.q2_tire ? `<span class="tire-badge tire-${result.q2_tire}">${result.q2_tire.charAt(0).toUpperCase()}</span>` : '-'}</td>
+                                        <td>${isEliminated ? '<span class="status-eliminated">OUT</span>' : '<span class="status-through">Q3</span>'}</td>
+                                    </tr>
+                                `;
+                            }).join('') || '<tr><td colspan="6">No results</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+
+                ${renderMultiplayerSyncUI(state, isMultiplayer, imReady, opponentReady, bothReady, 'Continue to Q3', 'advance-qualifying')}
+            </div>
+        </div>
+    `;
+
+    attachQualifyingListeners(container, state, isMultiplayer, imReady);
+}
+
+/**
+ * Q3 Qualifying Screen - Top 10 fight for pole
+ */
+function renderQualifyingQ3(container, state) {
+    const isMultiplayer = state.is_multiplayer;
+    const myPlayer = state.players?.find(p => p.player_id === state.your_player_id);
+    const otherPlayer = state.players?.find(p => p.player_id !== state.your_player_id);
+    const imReady = myPlayer?.is_ready;
+    const opponentReady = otherPlayer?.is_ready;
+    const bothReady = isMultiplayer ? (imReady && opponentReady) : true;
+    const isSprintWeekend = state.current_track?.is_sprint_weekend;
+
+    // Q3 results - top 10 only
+    const q3Results = (state.qualifying_results || []).filter(r => !r.eliminated_in);
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <h1>Q3 Results - Final Grid</h1>
+                <p class="text-secondary">${escapeHtml(state.current_track?.name || 'Unknown Track')}${isSprintWeekend ? ' - Sprint Weekend' : ''}</p>
+                <div class="quali-stage-indicator">
+                    <span class="quali-stage completed">Q1</span>
+                    <span class="quali-stage completed">Q2</span>
+                    <span class="quali-stage active">Q3</span>
+                </div>
+            </div>
+
+            <div class="game-content">
+                <div class="quali-info-bar mb-md">
+                    <span class="quali-info">Top 10 Shootout for Pole Position!</span>
+                </div>
+
+                <div class="card">
+                    <h3 class="mb-md">Pole Position Shootout</h3>
+                    <table class="results-table quali-table q3-table">
+                        <thead>
+                            <tr>
+                                <th>Pos</th>
+                                <th>Driver</th>
+                                <th>Team</th>
+                                <th>Q3 Time</th>
+                                <th>Gap</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${q3Results.slice(0, 10).map((result, idx) => {
+                                const poleTime = q3Results[0]?.q3_time || q3Results[0]?.lap_time;
+                                const gap = idx === 0 ? '-' : calculateTimeGap(poleTime, result.q3_time || result.lap_time);
+                                return `
+                                    <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''} ${idx === 0 ? 'pole-position' : ''}">
+                                        <td class="pos-cell">${idx === 0 ? '<span class="pole-badge">P</span>' : idx + 1}</td>
+                                        <td>${escapeHtml(result.driver_name)}</td>
+                                        <td>${escapeHtml(result.team_name)}</td>
+                                        <td class="time-cell">${result.q3_time || result.lap_time}</td>
+                                        <td class="gap-cell">${gap}</td>
+                                    </tr>
+                                `;
+                            }).join('') || '<tr><td colspan="5">No results</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Full Grid Preview -->
+                <div class="card mt-lg">
+                    <h3 class="mb-md">Full Starting Grid</h3>
+                    <table class="results-table quali-table">
+                        <thead>
+                            <tr>
+                                <th>Grid</th>
+                                <th>Driver</th>
+                                <th>Team</th>
+                                <th>Best Time</th>
+                                <th>Session</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${state.qualifying_results?.map(result => {
+                                const session = result.eliminated_in || 'Q3';
+                                const bestTime = result.q3_time || result.q2_time || result.q1_time || result.lap_time;
+                                return `
+                                    <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''}">
+                                        <td class="pos-cell">${result.position}</td>
+                                        <td>${escapeHtml(result.driver_name)}</td>
+                                        <td>${escapeHtml(result.team_name)}</td>
+                                        <td class="time-cell">${bestTime}</td>
+                                        <td><span class="session-badge session-${session.toLowerCase()}">${session}</span></td>
+                                    </tr>
+                                `;
+                            }).join('') || '<tr><td colspan="5">No results</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+
+                ${isSprintWeekend ?
+                    renderMultiplayerSyncUI(state, isMultiplayer, imReady, opponentReady, bothReady, 'Continue to Sprint Shootout', 'advance-qualifying') :
+                    renderMultiplayerSyncUI(state, isMultiplayer, imReady, opponentReady, bothReady, 'Continue to Tire Selection', 'advance-qualifying')
+                }
+            </div>
+        </div>
+    `;
+
+    attachQualifyingListeners(container, state, isMultiplayer, imReady);
+}
+
+/**
+ * Helper to render multiplayer sync UI
+ */
+function renderMultiplayerSyncUI(state, isMultiplayer, imReady, opponentReady, bothReady, continueText, endpoint) {
+    const otherPlayer = state.players?.find(p => p.player_id !== state.your_player_id);
+
+    if (isMultiplayer) {
+        return `
+            <div class="sync-status mt-xl">
+                <div class="sync-player ${imReady ? 'is-ready' : ''}">
+                    <span class="sync-name">You</span>
+                    <span class="sync-indicator">${imReady ? 'Ready' : 'Reviewing'}</span>
+                </div>
+                <div class="sync-player ${opponentReady ? 'is-ready' : ''}">
+                    <span class="sync-name">${escapeHtml(otherPlayer?.username || 'Opponent')}</span>
+                    <span class="sync-indicator">${opponentReady ? 'Ready' : 'Reviewing'}</span>
+                </div>
+            </div>
+            ${!imReady ? `
+                <button class="btn btn-success btn-lg btn-block mt-lg" id="ready-btn">
+                    Ready to Continue
+                </button>
+            ` : bothReady ? `
+                <button class="btn btn-primary btn-lg btn-block mt-lg" id="continue-btn" data-endpoint="${endpoint}">
+                    ${continueText}
+                </button>
+            ` : `
+                <div class="waiting-sync mt-lg">
+                    <div class="spinner-small"></div>
+                    <span>Waiting for ${escapeHtml(otherPlayer?.username || 'opponent')}...</span>
+                </div>
+            `}
+        `;
+    } else {
+        return `
+            <button class="btn btn-primary btn-lg btn-block mt-xl" id="continue-btn" data-endpoint="${endpoint}">
+                ${continueText}
+            </button>
+        `;
+    }
+}
+
+/**
+ * Attach event listeners for qualifying screens
+ */
+function attachQualifyingListeners(container, state, isMultiplayer, imReady) {
+    document.getElementById('ready-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('ready-btn');
+        setButtonLoading(btn, true);
+        try {
+            const newState = await api.post(`/gameplay/${state.game_id}/ready`, { ready: true });
+            renderGameScreen(container, newState);
+        } catch (error) {
+            showAlert(container.querySelector('.game-content'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
+
+    document.getElementById('continue-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('continue-btn');
+        const endpoint = btn.dataset.endpoint || 'advance-qualifying';
+        setButtonLoading(btn, true);
+        try {
+            const newState = await api.post(`/gameplay/${state.game_id}/${endpoint}`);
+            renderGameScreen(container, newState);
+        } catch (error) {
+            showAlert(container.querySelector('.game-content'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
+
+    if (isMultiplayer && imReady) {
+        startRefreshInterval(state.game_id, container);
+    }
+}
+
+/**
+ * Calculate time gap between two lap times (format: "1:23.456")
+ */
+function calculateTimeGap(poleTime, lapTime) {
+    if (!poleTime || !lapTime) return '-';
+
+    const parseTime = (t) => {
+        const match = t.match(/(\d+):(\d+)\.(\d+)/);
+        if (!match) return 0;
+        return parseInt(match[1]) * 60 + parseInt(match[2]) + parseInt(match[3]) / 1000;
+    };
+
+    const gap = parseTime(lapTime) - parseTime(poleTime);
+    if (gap <= 0) return '-';
+    return `+${gap.toFixed(3)}`;
+}
+
+// ==================== SPRINT WEEKEND SCREENS ====================
+
+/**
+ * Sprint Shootout Q1 - Qualifying for Sprint Race
+ */
+function renderSprintShootoutQ1(container, state) {
     const isMultiplayer = state.is_multiplayer;
     const myPlayer = state.players?.find(p => p.player_id === state.your_player_id);
     const otherPlayer = state.players?.find(p => p.player_id !== state.your_player_id);
@@ -1066,31 +1442,521 @@ function renderQualifying(container, state) {
     const opponentReady = otherPlayer?.is_ready;
     const bothReady = isMultiplayer ? (imReady && opponentReady) : true;
 
+    const q1Results = state.qualifying_results || [];
+
     container.innerHTML = `
         <div class="game-container">
             <div class="game-header">
-                <h1>Qualifying Results</h1>
+                <h1>Sprint Shootout - SQ1</h1>
                 <p class="text-secondary">${escapeHtml(state.current_track?.name || 'Unknown Track')}</p>
+                <div class="sprint-badge">SPRINT WEEKEND</div>
+                <div class="quali-stage-indicator">
+                    <span class="quali-stage active">SQ1</span>
+                    <span class="quali-stage">SQ2</span>
+                    <span class="quali-stage">SQ3</span>
+                </div>
             </div>
 
             <div class="game-content">
+                <div class="quali-info-bar mb-md">
+                    <span class="quali-info">Sprint Shootout: Bottom 5 eliminated (P16-P20)</span>
+                </div>
+
                 <div class="card">
+                    <table class="results-table quali-table">
+                        <thead>
+                            <tr>
+                                <th>Pos</th>
+                                <th>Driver</th>
+                                <th>Team</th>
+                                <th>SQ1 Time</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${q1Results.map((result, idx) => {
+                                const isEliminated = result.position >= 16 || result.eliminated_in === 'Q1';
+                                return `
+                                    <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''} ${isEliminated ? 'eliminated-row' : ''}">
+                                        <td class="pos-cell">${result.position}</td>
+                                        <td>${escapeHtml(result.driver_name)}</td>
+                                        <td>${escapeHtml(result.team_name)}</td>
+                                        <td class="time-cell">${result.q1_time || result.lap_time}</td>
+                                        <td>${isEliminated ? '<span class="status-eliminated">OUT</span>' : '<span class="status-through">SQ2</span>'}</td>
+                                    </tr>
+                                `;
+                            }).join('') || '<tr><td colspan="5">No results</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+
+                ${renderMultiplayerSyncUI(state, isMultiplayer, imReady, opponentReady, bothReady, 'Continue to SQ2', 'advance-qualifying')}
+            </div>
+        </div>
+    `;
+
+    attachQualifyingListeners(container, state, isMultiplayer, imReady);
+}
+
+/**
+ * Sprint Shootout Q2
+ */
+function renderSprintShootoutQ2(container, state) {
+    const isMultiplayer = state.is_multiplayer;
+    const myPlayer = state.players?.find(p => p.player_id === state.your_player_id);
+    const otherPlayer = state.players?.find(p => p.player_id !== state.your_player_id);
+    const imReady = myPlayer?.is_ready;
+    const opponentReady = otherPlayer?.is_ready;
+    const bothReady = isMultiplayer ? (imReady && opponentReady) : true;
+
+    const q2Results = (state.qualifying_results || []).filter(r => !r.eliminated_in || r.eliminated_in !== 'Q1');
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <h1>Sprint Shootout - SQ2</h1>
+                <p class="text-secondary">${escapeHtml(state.current_track?.name || 'Unknown Track')}</p>
+                <div class="sprint-badge">SPRINT WEEKEND</div>
+                <div class="quali-stage-indicator">
+                    <span class="quali-stage completed">SQ1</span>
+                    <span class="quali-stage active">SQ2</span>
+                    <span class="quali-stage">SQ3</span>
+                </div>
+            </div>
+
+            <div class="game-content">
+                <div class="quali-info-bar mb-md">
+                    <span class="quali-info">Top 10 advance to SQ3 | Bottom 5 eliminated (P11-P15)</span>
+                </div>
+
+                <div class="card">
+                    <table class="results-table quali-table">
+                        <thead>
+                            <tr>
+                                <th>Pos</th>
+                                <th>Driver</th>
+                                <th>Team</th>
+                                <th>SQ2 Time</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${q2Results.map((result, idx) => {
+                                const q2Position = idx + 1;
+                                const isEliminated = q2Position >= 11 || result.eliminated_in === 'Q2';
+                                return `
+                                    <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''} ${isEliminated ? 'eliminated-row' : ''}">
+                                        <td class="pos-cell">${q2Position}</td>
+                                        <td>${escapeHtml(result.driver_name)}</td>
+                                        <td>${escapeHtml(result.team_name)}</td>
+                                        <td class="time-cell">${result.q2_time || result.lap_time}</td>
+                                        <td>${isEliminated ? '<span class="status-eliminated">OUT</span>' : '<span class="status-through">SQ3</span>'}</td>
+                                    </tr>
+                                `;
+                            }).join('') || '<tr><td colspan="5">No results</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+
+                ${renderMultiplayerSyncUI(state, isMultiplayer, imReady, opponentReady, bothReady, 'Continue to SQ3', 'advance-qualifying')}
+            </div>
+        </div>
+    `;
+
+    attachQualifyingListeners(container, state, isMultiplayer, imReady);
+}
+
+/**
+ * Sprint Shootout Q3 - Final Sprint Grid
+ */
+function renderSprintShootoutQ3(container, state) {
+    const isMultiplayer = state.is_multiplayer;
+    const myPlayer = state.players?.find(p => p.player_id === state.your_player_id);
+    const otherPlayer = state.players?.find(p => p.player_id !== state.your_player_id);
+    const imReady = myPlayer?.is_ready;
+    const opponentReady = otherPlayer?.is_ready;
+    const bothReady = isMultiplayer ? (imReady && opponentReady) : true;
+
+    const q3Results = (state.qualifying_results || []).filter(r => !r.eliminated_in);
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <h1>Sprint Shootout - SQ3</h1>
+                <p class="text-secondary">${escapeHtml(state.current_track?.name || 'Unknown Track')}</p>
+                <div class="sprint-badge">SPRINT WEEKEND</div>
+                <div class="quali-stage-indicator">
+                    <span class="quali-stage completed">SQ1</span>
+                    <span class="quali-stage completed">SQ2</span>
+                    <span class="quali-stage active">SQ3</span>
+                </div>
+            </div>
+
+            <div class="game-content">
+                <div class="quali-info-bar mb-md">
+                    <span class="quali-info">Top 10 Fight for Sprint Pole!</span>
+                </div>
+
+                <div class="card">
+                    <h3 class="mb-md">Sprint Pole Shootout</h3>
+                    <table class="results-table quali-table q3-table">
+                        <thead>
+                            <tr>
+                                <th>Pos</th>
+                                <th>Driver</th>
+                                <th>Team</th>
+                                <th>SQ3 Time</th>
+                                <th>Gap</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${q3Results.slice(0, 10).map((result, idx) => {
+                                const poleTime = q3Results[0]?.q3_time || q3Results[0]?.lap_time;
+                                const gap = idx === 0 ? '-' : calculateTimeGap(poleTime, result.q3_time || result.lap_time);
+                                return `
+                                    <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''} ${idx === 0 ? 'pole-position' : ''}">
+                                        <td class="pos-cell">${idx === 0 ? '<span class="pole-badge">P</span>' : idx + 1}</td>
+                                        <td>${escapeHtml(result.driver_name)}</td>
+                                        <td>${escapeHtml(result.team_name)}</td>
+                                        <td class="time-cell">${result.q3_time || result.lap_time}</td>
+                                        <td class="gap-cell">${gap}</td>
+                                    </tr>
+                                `;
+                            }).join('') || '<tr><td colspan="5">No results</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+
+                ${renderMultiplayerSyncUI(state, isMultiplayer, imReady, opponentReady, bothReady, 'Continue to Sprint Grid', 'advance-qualifying')}
+            </div>
+        </div>
+    `;
+
+    attachQualifyingListeners(container, state, isMultiplayer, imReady);
+}
+
+/**
+ * Sprint Grid Screen - Shows full sprint starting grid
+ */
+function renderSprintGrid(container, state) {
+    const isMultiplayer = state.is_multiplayer;
+    const myPlayer = state.players?.find(p => p.player_id === state.your_player_id);
+    const otherPlayer = state.players?.find(p => p.player_id !== state.your_player_id);
+    const imReady = myPlayer?.is_ready;
+    const opponentReady = otherPlayer?.is_ready;
+    const bothReady = isMultiplayer ? (imReady && opponentReady) : true;
+    const sprintLaps = state.current_track?.sprint_laps || 19;
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <h1>Sprint Starting Grid</h1>
+                <p class="text-secondary">${escapeHtml(state.current_track?.name || 'Unknown Track')}</p>
+                <div class="sprint-badge">SPRINT RACE - ${sprintLaps} LAPS</div>
+            </div>
+
+            <div class="game-content">
+                <div class="sprint-info card mb-lg">
+                    <h3>Sprint Race Format</h3>
+                    <div class="sprint-points-info">
+                        <span class="sprint-point">P1: 8pts</span>
+                        <span class="sprint-point">P2: 7pts</span>
+                        <span class="sprint-point">P3: 6pts</span>
+                        <span class="sprint-point">P4: 5pts</span>
+                        <span class="sprint-point">P5: 4pts</span>
+                        <span class="sprint-point">P6: 3pts</span>
+                        <span class="sprint-point">P7: 2pts</span>
+                        <span class="sprint-point">P8: 1pt</span>
+                    </div>
+                    <p class="text-secondary mt-sm">No pit stops required - tyres provided</p>
+                </div>
+
+                <div class="card">
+                    <h3 class="mb-md">Full Sprint Grid</h3>
+                    <table class="results-table">
+                        <thead>
+                            <tr>
+                                <th>Grid</th>
+                                <th>Driver</th>
+                                <th>Team</th>
+                                <th>Shootout Session</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${state.qualifying_results?.map(result => {
+                                const session = result.eliminated_in ? `SQ${result.eliminated_in.charAt(1)}` : 'SQ3';
+                                return `
+                                    <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''}">
+                                        <td class="pos-cell">${result.position}</td>
+                                        <td>${escapeHtml(result.driver_name)}</td>
+                                        <td>${escapeHtml(result.team_name)}</td>
+                                        <td><span class="session-badge session-${session.toLowerCase()}">${session}</span></td>
+                                    </tr>
+                                `;
+                            }).join('') || '<tr><td colspan="4">No results</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+
+                ${isMultiplayer ? `
+                    <div class="sync-status mt-xl">
+                        <div class="sync-player ${imReady ? 'is-ready' : ''}">
+                            <span class="sync-name">You</span>
+                            <span class="sync-indicator">${imReady ? 'Ready' : 'Reviewing'}</span>
+                        </div>
+                        <div class="sync-player ${opponentReady ? 'is-ready' : ''}">
+                            <span class="sync-name">${escapeHtml(otherPlayer?.username || 'Opponent')}</span>
+                            <span class="sync-indicator">${opponentReady ? 'Ready' : 'Reviewing'}</span>
+                        </div>
+                    </div>
+                    ${!imReady ? `
+                        <button class="btn btn-success btn-lg btn-block mt-lg" id="ready-btn">
+                            Ready for Sprint Race
+                        </button>
+                    ` : bothReady ? `
+                        <button class="btn btn-primary btn-lg btn-block mt-lg" id="start-sprint-btn">
+                            Start Sprint Race
+                        </button>
+                    ` : `
+                        <div class="waiting-sync mt-lg">
+                            <div class="spinner-small"></div>
+                            <span>Waiting for ${escapeHtml(otherPlayer?.username || 'opponent')}...</span>
+                        </div>
+                    `}
+                ` : `
+                    <button class="btn btn-primary btn-lg btn-block mt-xl" id="start-sprint-btn">
+                        Start Sprint Race
+                    </button>
+                `}
+            </div>
+        </div>
+    `;
+
+    document.getElementById('ready-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('ready-btn');
+        setButtonLoading(btn, true);
+        try {
+            const newState = await api.post(`/gameplay/${state.game_id}/ready`, { ready: true });
+            renderGameScreen(container, newState);
+        } catch (error) {
+            showAlert(container.querySelector('.game-content'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
+
+    document.getElementById('start-sprint-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('start-sprint-btn');
+        setButtonLoading(btn, true);
+        try {
+            const newState = await api.post(`/gameplay/${state.game_id}/start-sprint-race`);
+            renderGameScreen(container, newState);
+        } catch (error) {
+            showAlert(container.querySelector('.game-content'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
+
+    if (isMultiplayer && imReady) {
+        startRefreshInterval(state.game_id, container);
+    }
+}
+
+// Track sprint race simulation state
+let sprintAutoSimulating = false;
+
+/**
+ * Sprint Race In Progress Screen
+ */
+function renderSprintRace(container, state) {
+    const raceState = state.race_state;
+    const sprintLaps = state.current_track?.sprint_laps || 19;
+
+    // Weather indicator
+    const weatherIcon = raceState?.weather === 'light_rain' ? '🌧️' :
+                       raceState?.weather === 'heavy_rain' ? '⛈️' : '☀️';
+    const weatherText = raceState?.weather?.replace('_', ' ').toUpperCase() || 'DRY';
+
+    container.innerHTML = `
+        <div class="game-container race-screen">
+            <div class="game-header">
+                <div class="race-header-info">
+                    <div>
+                        <h1>Sprint Race</h1>
+                        <p class="text-secondary">${escapeHtml(state.current_track?.name || 'Unknown')}</p>
+                        <span class="weather-indicator ${raceState?.weather !== 'dry' ? 'rain-warning' : ''}">${weatherIcon} ${weatherText}</span>
+                        ${raceState?.safety_car ? '<span class="safety-car-badge">SAFETY CAR</span>' : ''}
+                    </div>
+                    <div class="lap-counter">
+                        <span class="lap-current">Lap ${raceState?.current_lap || 0}</span>
+                        <span class="lap-total">/ ${raceState?.total_laps || sprintLaps}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="game-content">
+                <div class="race-simulating card mb-lg">
+                    <div class="simulating-status">
+                        <div class="spinner-small"></div>
+                        <span>Sprint Race in progress...</span>
+                    </div>
+                </div>
+
+                <div class="race-positions card">
+                    <table class="race-table">
+                        <thead>
+                            <tr>
+                                <th>Pos</th>
+                                <th>Driver</th>
+                                <th>Team</th>
+                                <th>Gap</th>
+                                <th>Tire</th>
+                                <th>Wear</th>
+                            </tr>
+                        </thead>
+                        <tbody id="race-positions">
+                            ${renderSprintRacePositions(raceState?.positions || [], state.your_player_id)}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="race-events card mt-lg">
+                    <h3>Recent Events</h3>
+                    <div id="race-events" class="events-list">
+                        ${raceState?.events?.slice(-8).map(e => `
+                            <div class="event-item event-${e.event_type}">
+                                <span class="event-lap">Lap ${e.lap}</span>
+                                <span class="event-text">${escapeHtml(e.description)}</span>
+                            </div>
+                        `).reverse().join('') || '<p class="text-muted">No events yet</p>'}
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Auto-simulate sprint race (no pit decisions)
+    if (!raceState?.is_finished) {
+        autoSimulateSprintRace(container, state.game_id);
+    }
+}
+
+/**
+ * Render sprint race positions (no pit stops column)
+ */
+function renderSprintRacePositions(positions, yourPlayerId) {
+    return positions.map(p => `
+        <tr class="${p.is_player_driver ? 'player-row' : ''} ${p.player_id === yourPlayerId ? 'your-driver' : ''} ${p.status === 'dnf' ? 'dnf-row' : ''}">
+            <td class="pos-cell">${p.status === 'dnf' ? 'DNF' : p.position}</td>
+            <td>${escapeHtml(p.driver_name)}</td>
+            <td class="team-cell">${escapeHtml(p.team_name || '')}</td>
+            <td>${p.gap}</td>
+            <td><span class="tire-badge tire-${p.tire}">${p.tire.charAt(0).toUpperCase()}</span></td>
+            <td>
+                <div class="wear-bar">
+                    <div class="wear-fill" style="width: ${p.tire_wear}%; background: ${getWearColor(p.tire_wear)}"></div>
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+/**
+ * Auto-simulate sprint race without pit decisions
+ */
+async function autoSimulateSprintRace(container, gameId) {
+    if (sprintAutoSimulating) return;
+    sprintAutoSimulating = true;
+
+    try {
+        let state = await api.post(`/gameplay/${gameId}/simulate-sprint-lap`);
+
+        while (state.phase === GamePhase.SPRINT_RACE) {
+            const raceState = state.race_state;
+
+            if (raceState?.is_finished || raceState?.current_lap >= raceState?.total_laps) {
+                break;
+            }
+
+            // Small delay for visual effect
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            // Simulate next lap
+            state = await api.post(`/gameplay/${gameId}/simulate-sprint-lap`);
+        }
+
+        sprintAutoSimulating = false;
+        renderGameScreen(container, state);
+    } catch (error) {
+        sprintAutoSimulating = false;
+        showAlert(container.querySelector('.game-content'), error.message, 'error');
+    }
+}
+
+/**
+ * Sprint Race Results Screen
+ */
+function renderSprintResults(container, state) {
+    const isMultiplayer = state.is_multiplayer;
+    const myPlayer = state.players?.find(p => p.player_id === state.your_player_id);
+    const otherPlayer = state.players?.find(p => p.player_id !== state.your_player_id);
+    const imReady = myPlayer?.is_ready;
+    const opponentReady = otherPlayer?.is_ready;
+    const bothReady = isMultiplayer ? (imReady && opponentReady) : true;
+
+    // Sprint points: 8,7,6,5,4,3,2,1 for P1-P8
+    const getSprintPoints = (pos) => {
+        const sprintPoints = [8, 7, 6, 5, 4, 3, 2, 1];
+        return pos <= 8 ? sprintPoints[pos - 1] : 0;
+    };
+
+    // Calculate points earned this sprint for each player
+    const myDrivers = state.race_state?.positions?.filter(p => p.player_id === state.your_player_id) || [];
+    const myPoints = myDrivers.reduce((sum, p) => sum + (p.status !== 'dnf' ? getSprintPoints(p.position) : 0), 0);
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <h1>Sprint Race Results</h1>
+                <p class="text-secondary">${escapeHtml(state.current_track?.name || 'Unknown Track')}</p>
+                <div class="sprint-badge">SPRINT COMPLETE</div>
+            </div>
+
+            <div class="game-content">
+                <div class="race-summary card mb-lg">
+                    <h3>Your Sprint Results</h3>
+                    <div class="your-results">
+                        ${myDrivers.map(p => `
+                            <div class="result-driver ${p.status === 'dnf' ? 'dnf' : p.position <= 3 ? 'podium' : ''}">
+                                <span class="result-pos">${p.status === 'dnf' ? 'DNF' : `P${p.position}`}</span>
+                                <span class="result-name">${escapeHtml(p.driver_name)}</span>
+                                <span class="result-points">+${p.status === 'dnf' ? '0' : getSprintPoints(p.position)} pts</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <div class="total-points">Sprint Points: +${myPoints}</div>
+                </div>
+
+                <div class="card">
+                    <h3>Sprint Classification</h3>
+                    <div class="sprint-points-legend mb-md">
+                        <span class="text-secondary">Points: P1=8, P2=7, P3=6, P4=5, P5=4, P6=3, P7=2, P8=1</span>
+                    </div>
                     <table class="results-table">
                         <thead>
                             <tr>
                                 <th>Pos</th>
                                 <th>Driver</th>
                                 <th>Team</th>
-                                <th>Time</th>
+                                <th>Points</th>
                             </tr>
                         </thead>
                         <tbody>
-                            ${state.qualifying_results?.map(result => `
-                                <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''}">
-                                    <td class="pos-cell">${result.position}</td>
-                                    <td>${escapeHtml(result.driver_name)}</td>
-                                    <td>${escapeHtml(result.team_name)}</td>
-                                    <td class="time-cell">${result.lap_time}</td>
+                            ${state.race_state?.positions?.map(p => `
+                                <tr class="${p.is_player_driver ? 'player-row' : ''} ${p.player_id === state.your_player_id ? 'your-driver' : ''} ${p.status === 'dnf' ? 'dnf-row' : ''}">
+                                    <td class="pos-cell">${p.status === 'dnf' ? 'DNF' : p.position}</td>
+                                    <td>${escapeHtml(p.driver_name)}</td>
+                                    <td>${escapeHtml(p.team_name)}</td>
+                                    <td>${p.status === 'dnf' ? '0' : getSprintPoints(p.position)}</td>
                                 </tr>
                             `).join('') || '<tr><td colspan="4">No results</td></tr>'}
                         </tbody>
@@ -1110,7 +1976,7 @@ function renderQualifying(container, state) {
                     </div>
                     ${!imReady ? `
                         <button class="btn btn-success btn-lg btn-block mt-lg" id="ready-btn">
-                            Ready for Tire Selection
+                            Ready for Main Race
                         </button>
                     ` : bothReady ? `
                         <button class="btn btn-primary btn-lg btn-block mt-lg" id="continue-btn">
@@ -1147,7 +2013,7 @@ function renderQualifying(container, state) {
         const btn = document.getElementById('continue-btn');
         setButtonLoading(btn, true);
         try {
-            const newState = await api.post(`/gameplay/${state.game_id}/advance-to-tire-selection`);
+            const newState = await api.post(`/gameplay/${state.game_id}/advance-from-sprint`);
             renderGameScreen(container, newState);
         } catch (error) {
             showAlert(container.querySelector('.game-content'), error.message, 'error');
@@ -1155,7 +2021,6 @@ function renderQualifying(container, state) {
         }
     });
 
-    // Auto-refresh when ready (to detect when other player advances phase)
     if (isMultiplayer && imReady) {
         startRefreshInterval(state.game_id, container);
     }

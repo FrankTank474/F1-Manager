@@ -2008,3 +2008,205 @@
         flex-direction: column;
     }
 }
+
+/* ==================== QUALIFYING STAGES ====================  */
+
+/* Qualifying Stage Indicator */
+.quali-stage-indicator {
+    display: flex;
+    gap: var(--space-sm);
+    margin-top: var(--space-md);
+}
+
+.quali-stage {
+    background: var(--bg-tertiary);
+    padding: var(--space-xs) var(--space-md);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-sm);
+    font-weight: 600;
+    color: var(--text-muted);
+    border: 2px solid transparent;
+}
+
+.quali-stage.active {
+    background: var(--accent-primary);
+    color: white;
+    border-color: var(--accent-primary);
+}
+
+.quali-stage.completed {
+    background: var(--success);
+    color: white;
+    border-color: var(--success);
+}
+
+/* Qualifying Info Bar */
+.quali-info-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-md);
+    padding: var(--space-md);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    border-left: 4px solid var(--accent-primary);
+}
+
+.quali-info {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+}
+
+.quali-info.tire-info {
+    color: var(--warning);
+    font-weight: 600;
+}
+
+/* Qualifying Table Styles */
+.quali-table .eliminated-row {
+    opacity: 0.6;
+    background: var(--bg-tertiary);
+}
+
+.quali-table .eliminated-row td {
+    color: var(--text-muted);
+}
+
+.status-eliminated {
+    background: var(--error);
+    color: white;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-xs);
+    font-weight: 600;
+}
+
+.status-through {
+    background: var(--success);
+    color: white;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-xs);
+    font-weight: 600;
+}
+
+/* Q3 Pole Position */
+.pole-position {
+    background: linear-gradient(90deg, rgba(255, 215, 0, 0.15) 0%, transparent 100%);
+}
+
+.pole-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background: linear-gradient(135deg, #ffd700 0%, #ffb700 100%);
+    color: #000;
+    border-radius: 50%;
+    font-weight: bold;
+    font-size: var(--font-sm);
+}
+
+.gap-cell {
+    color: var(--text-muted);
+    font-size: var(--font-sm);
+}
+
+/* Session Badges */
+.session-badge {
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: var(--font-xs);
+    font-weight: 600;
+}
+
+.session-badge.session-q1 {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.session-badge.session-q2 {
+    background: var(--warning);
+    color: #000;
+}
+
+.session-badge.session-q3 {
+    background: var(--success);
+    color: white;
+}
+
+.session-badge.session-sq1 {
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.session-badge.session-sq2 {
+    background: var(--warning);
+    color: #000;
+}
+
+.session-badge.session-sq3 {
+    background: var(--accent-primary);
+    color: white;
+}
+
+/* ==================== SPRINT WEEKEND ====================  */
+
+/* Sprint Badge */
+.sprint-badge {
+    display: inline-block;
+    background: linear-gradient(135deg, #ff6b00 0%, #ff8c00 100%);
+    color: white;
+    padding: var(--space-xs) var(--space-md);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-sm);
+    font-weight: 700;
+    letter-spacing: 1px;
+    margin-top: var(--space-sm);
+}
+
+/* Sprint Info Card */
+.sprint-info h3 {
+    margin-bottom: var(--space-md);
+}
+
+.sprint-points-info {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    justify-content: center;
+}
+
+.sprint-point {
+    background: var(--bg-tertiary);
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-sm);
+    font-weight: 600;
+}
+
+.sprint-points-legend {
+    text-align: center;
+    font-size: var(--font-sm);
+}
+
+/* Sprint Race Header */
+.race-screen .game-header h1 {
+    color: #ff6b00;
+}
+
+/* Responsive Qualifying Styles */
+@media (max-width: 768px) {
+    .quali-stage-indicator {
+        justify-content: center;
+    }
+
+    .quali-info-bar {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .sprint-points-info {
+        font-size: var(--font-xs);
+    }
+}

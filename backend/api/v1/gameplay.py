@@ -247,20 +247,102 @@ async def start_race_weekend(
     return game_state.get_state_response(user_id)
 
 
+@router.post("/{game_id}/advance-qualifying", response_model=GameStateResponse)
+async def advance_qualifying(
+    game_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Advance to the next qualifying session (Q1->Q2->Q3->Tire Selection)."""
+    game_state = get_game_state(game_id, user_id)
+
+    valid_phases = [
+        GamePhase.QUALIFYING_Q1, GamePhase.QUALIFYING_Q2, GamePhase.QUALIFYING_Q3,
+        GamePhase.SPRINT_SHOOTOUT_Q1, GamePhase.SPRINT_SHOOTOUT_Q2, GamePhase.SPRINT_SHOOTOUT_Q3,
+        GamePhase.QUALIFYING  # Legacy support
+    ]
+
+    if game_state.phase not in valid_phases:
+        raise HTTPException(status_code=400, detail="Not in a qualifying phase")
+
+    success = game_state.advance_qualifying(user_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to advance qualifying")
+
+    return game_state.get_state_response(user_id)
+
+
 @router.post("/{game_id}/advance-to-tire-selection", response_model=GameStateResponse)
 async def advance_to_tire_selection(
     game_id: str,
     user_id: str = Depends(get_current_user_id),
 ):
-    """Advance from qualifying to tire selection."""
+    """Advance from qualifying to tire selection (legacy endpoint)."""
     game_state = get_game_state(game_id, user_id)
 
-    if game_state.phase != GamePhase.QUALIFYING:
+    # Support both old QUALIFYING phase and new Q3 phase
+    if game_state.phase not in [GamePhase.QUALIFYING, GamePhase.QUALIFYING_Q3]:
         raise HTTPException(status_code=400, detail="Not in qualifying phase")
 
-    success = game_state.advance_to_tire_selection(user_id)
+    if hasattr(game_state, 'advance_qualifying'):
+        success = game_state.advance_qualifying(user_id)
+    else:
+        success = game_state.advance_to_tire_selection(user_id)
+
     if not success:
         raise HTTPException(status_code=400, detail="Failed to advance to tire selection")
+
+    return game_state.get_state_response(user_id)
+
+
+# ==================== SPRINT RACE ====================
+
+@router.post("/{game_id}/start-sprint-race", response_model=GameStateResponse)
+async def start_sprint_race(
+    game_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Start the sprint race from the sprint grid."""
+    game_state = get_game_state(game_id, user_id)
+
+    if game_state.phase != GamePhase.SPRINT_GRID:
+        raise HTTPException(status_code=400, detail="Not on sprint grid")
+
+    success = game_state.start_sprint_race(user_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to start sprint race")
+
+    return game_state.get_state_response(user_id)
+
+
+@router.post("/{game_id}/simulate-sprint-lap", response_model=GameStateResponse)
+async def simulate_sprint_lap(
+    game_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Simulate one lap of the sprint race."""
+    game_state = get_game_state(game_id, user_id)
+
+    if game_state.phase != GamePhase.SPRINT_RACE:
+        raise HTTPException(status_code=400, detail="Sprint race not in progress")
+
+    game_state.simulate_sprint_lap()
+    return game_state.get_state_response(user_id)
+
+
+@router.post("/{game_id}/advance-from-sprint", response_model=GameStateResponse)
+async def advance_from_sprint(
+    game_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Advance from sprint results to main race qualifying."""
+    game_state = get_game_state(game_id, user_id)
+
+    if game_state.phase != GamePhase.SPRINT_RESULTS:
+        raise HTTPException(status_code=400, detail="Not in sprint results phase")
+
+    success = game_state.advance_from_sprint_results(user_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to advance from sprint results")
 
     return game_state.get_state_response(user_id)
 

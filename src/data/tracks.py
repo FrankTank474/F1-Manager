@@ -59,7 +59,9 @@ TRACKS = [
         "pit_loss_time": 23.0,
         "overtaking_difficulty": 4,
         "tire_degradation": 1.1,
-        "drs_zones": 2
+        "drs_zones": 2,
+        "is_sprint_weekend": True,
+        "sprint_laps": 19
     },
     {
         "name": "Miami Grand Prix",
@@ -71,7 +73,9 @@ TRACKS = [
         "pit_loss_time": 24.0,
         "overtaking_difficulty": 5,
         "tire_degradation": 1.2,
-        "drs_zones": 3
+        "drs_zones": 3,
+        "is_sprint_weekend": True,
+        "sprint_laps": 19
     },
     {
         "name": "Emilia Romagna Grand Prix",
@@ -131,7 +135,9 @@ TRACKS = [
         "pit_loss_time": 21.0,
         "overtaking_difficulty": 4,
         "tire_degradation": 1.1,
-        "drs_zones": 3
+        "drs_zones": 3,
+        "is_sprint_weekend": True,
+        "sprint_laps": 24
     },
     {
         "name": "British Grand Prix",
@@ -227,7 +233,9 @@ TRACKS = [
         "pit_loss_time": 22.0,
         "overtaking_difficulty": 5,
         "tire_degradation": 1.2,
-        "drs_zones": 2
+        "drs_zones": 2,
+        "is_sprint_weekend": True,
+        "sprint_laps": 19
     },
     {
         "name": "Mexican Grand Prix",
@@ -251,7 +259,9 @@ TRACKS = [
         "pit_loss_time": 22.0,
         "overtaking_difficulty": 4,
         "tire_degradation": 1.2,
-        "drs_zones": 2
+        "drs_zones": 2,
+        "is_sprint_weekend": True,
+        "sprint_laps": 24
     },
     {
         "name": "Las Vegas Grand Prix",
@@ -275,7 +285,9 @@ TRACKS = [
         "pit_loss_time": 23.0,
         "overtaking_difficulty": 5,
         "tire_degradation": 1.5,
-        "drs_zones": 2
+        "drs_zones": 2,
+        "is_sprint_weekend": True,
+        "sprint_laps": 19
     },
     {
         "name": "Abu Dhabi Grand Prix",

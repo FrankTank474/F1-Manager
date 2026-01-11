@@ -14,7 +14,19 @@ class GamePhase(str, Enum):
     TEAM_SETUP = "team_setup"  # Initial driver selection (alternating turns)
     MAIN_MENU = "main_menu"  # Between races - team management
     RACE_WEEKEND = "race_weekend"  # During a race weekend
-    QUALIFYING = "qualifying"
+    # Qualifying stages
+    QUALIFYING_Q1 = "qualifying_q1"  # All 20 drivers, bottom 5 eliminated
+    QUALIFYING_Q2 = "qualifying_q2"  # Top 15, bottom 5 eliminated (tire choice matters)
+    QUALIFYING_Q3 = "qualifying_q3"  # Top 10 fight for pole
+    QUALIFYING = "qualifying"  # Legacy - redirects to Q1
+    # Sprint weekend phases
+    SPRINT_SHOOTOUT_Q1 = "sprint_shootout_q1"  # Sprint qualifying Q1
+    SPRINT_SHOOTOUT_Q2 = "sprint_shootout_q2"  # Sprint qualifying Q2
+    SPRINT_SHOOTOUT_Q3 = "sprint_shootout_q3"  # Sprint qualifying Q3
+    SPRINT_GRID = "sprint_grid"  # Sprint starting grid
+    SPRINT_RACE = "sprint_race"  # Sprint race in progress
+    SPRINT_RESULTS = "sprint_results"  # Sprint race results
+    # Race phases
     TIRE_SELECTION = "tire_selection"
     RACE_IN_PROGRESS = "race_in_progress"
     RACE_RESULTS = "race_results"
@@ -307,6 +319,8 @@ class TrackInfo(BaseModel):
     track_type: str  # STREET, CIRCUIT, HIGH_SPEED, HIGH_DOWNFORCE, POWER
     overtaking_difficulty: float  # 1-10, higher = harder
     tire_degradation: float  # Multiplier, 1.0 = normal
+    is_sprint_weekend: bool = False  # Sprint format weekend
+    sprint_laps: int = 0  # Number of laps for sprint race (~1/3 of main race)
 
 
 class QualifyingResult(BaseModel):
@@ -317,6 +331,12 @@ class QualifyingResult(BaseModel):
     lap_time: str
     is_player_driver: bool = False
     player_id: Optional[str] = None
+    # Q1/Q2/Q3 tracking
+    eliminated_in: Optional[str] = None  # "Q1", "Q2", or None if made Q3
+    q1_time: Optional[str] = None
+    q2_time: Optional[str] = None
+    q3_time: Optional[str] = None
+    q2_tire: Optional[str] = None  # Tire used in Q2 (top 10 must start race on this)
 
 
 class RaceEntry(BaseModel):

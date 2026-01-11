@@ -316,6 +316,26 @@ class MultiplayerGameState:
         # Whether we're currently paused for pit decisions
         self.race_paused_for_pits = False
 
+        # Q1/Q2/Q3 Qualifying stages
+        self.q1_results: List[Dict] = []  # All 20 drivers
+        self.q2_results: List[Dict] = []  # Top 15 from Q1
+        self.q3_results: List[Dict] = []  # Top 10 from Q2
+        self.eliminated_q1: List[str] = []  # Driver names eliminated in Q1 (positions 16-20)
+        self.eliminated_q2: List[str] = []  # Driver names eliminated in Q2 (positions 11-15)
+        self.q2_tire_choices: Dict[str, str] = {}  # driver_name -> tire compound used in Q2
+        self.current_quali_session = ""  # "Q1", "Q2", "Q3", "SHOOTOUT_Q1", etc.
+
+        # Sprint race state
+        self.is_sprint_weekend = False
+        self.sprint_results: List[Dict] = []
+        self.sprint_entries: List[Dict] = []
+        self.sprint_events: List[Dict] = []
+        self.sprint_current_lap = 0
+        self.sprint_total_laps = 0
+        self.sprint_finished = False
+        self.sprint_qualifying_results: List[Dict] = []  # Grid for sprint race
+        self.main_race_qualifying_results: List[Dict] = []  # Grid for main race (after sprint weekend quali)
+
         # Weekend modifiers
         self._weekend_modifiers: Dict[str, Dict] = {}
 
@@ -997,8 +1017,39 @@ class MultiplayerGameState:
 
         self.reset_ready()
         self._generate_weekend_modifiers()
-        self._run_qualifying()
-        self.phase = GamePhase.QUALIFYING
+
+        # Reset qualifying state
+        self.q1_results = []
+        self.q2_results = []
+        self.q3_results = []
+        self.eliminated_q1 = []
+        self.eliminated_q2 = []
+        self.q2_tire_choices = {}
+        self.qualifying_results = []
+
+        # Check if sprint weekend
+        track = self._tracks[self.current_race - 1]
+        self.is_sprint_weekend = track.get("is_sprint_weekend", False)
+
+        if self.is_sprint_weekend:
+            # Sprint weekend: Start with Sprint Shootout Q1
+            self.sprint_results = []
+            self.sprint_entries = []
+            self.sprint_events = []
+            self.sprint_current_lap = 0
+            self.sprint_total_laps = track.get("sprint_laps", 19)
+            self.sprint_finished = False
+            self.sprint_qualifying_results = []
+            self.main_race_qualifying_results = []
+            self.current_quali_session = "SHOOTOUT_Q1"
+            self._run_qualifying_session("SHOOTOUT_Q1")
+            self.phase = GamePhase.SPRINT_SHOOTOUT_Q1
+        else:
+            # Normal weekend: Start with Q1
+            self.current_quali_session = "Q1"
+            self._run_qualifying_session("Q1")
+            self.phase = GamePhase.QUALIFYING_Q1
+
         return True
 
     def _generate_weekend_modifiers(self):
@@ -1050,13 +1101,8 @@ class MultiplayerGameState:
 
         return AI_TEAM_CARS.get(team_name, {"downforce": 65, "aero_efficiency": 65, "chassis": 65, "power_unit": 65, "reliability": 70, "tire_cooling": 65})
 
-    def _run_qualifying(self):
-        """Simulate qualifying."""
-        self.qualifying_results = []
-        track = self._tracks[self.current_race - 1]
-        entries = []
-
-        # Gather all drivers
+    def _get_all_drivers_for_qualifying(self) -> List[tuple]:
+        """Get all drivers for qualifying."""
         all_drivers = []
         for team in self.player_teams.values():
             for d in team["drivers"]:
@@ -1065,55 +1111,535 @@ class MultiplayerGameState:
         # Add AI drivers
         for d in self._all_drivers:
             if d["team_name"] and d["player_id"] is None:
-                # Check if not already in a player team
                 in_player_team = any(d in team["drivers"] for team in self.player_teams.values())
                 if not in_player_team:
                     all_drivers.append((d, d["team_name"], None))
 
-        for driver, team_name, player_id in all_drivers:
+        return all_drivers
+
+    def _simulate_quali_laps(self, driver: Dict, car: Dict, tire_compound: str = "soft") -> float:
+        """Simulate qualifying laps and return best time."""
+        modifiers = self._weekend_modifiers.get(driver["name"], {})
+
+        entry = {
+            "driver": driver,
+            "car": car,
+            "tire": TireState(tire_compound),
+            "weekend_form": modifiers.get("weekend_form", 0),
+            "quali_form": modifiers.get("quali_form", 0),
+            "mechanical_issue": modifiers.get("mechanical_issue", False)
+        }
+
+        # Simulate multiple quali laps
+        lap_times = [self._calculate_lap_time(entry, Weather.DRY, is_qualifying=True) for _ in range(3)]
+        best_time = min(lap_times)
+
+        # Incident chance
+        if random.random() < 0.02:
+            best_time += 5.0
+
+        return best_time
+
+    def _run_qualifying_session(self, session: str):
+        """Run a single qualifying session (Q1, Q2, Q3 or SHOOTOUT variants)."""
+        is_shootout = "SHOOTOUT" in session
+        session_num = session.replace("SHOOTOUT_", "")  # Get Q1, Q2, or Q3
+
+        all_drivers = self._get_all_drivers_for_qualifying()
+        entries = []
+
+        # Determine which drivers participate in this session
+        if session_num == "Q1":
+            participating_drivers = all_drivers
+        elif session_num == "Q2":
+            # Only drivers not eliminated in Q1 (top 15)
+            eliminated_names = self.eliminated_q1
+            participating_drivers = [(d, t, p) for d, t, p in all_drivers if d["name"] not in eliminated_names]
+        elif session_num == "Q3":
+            # Only drivers not eliminated in Q1 or Q2 (top 10)
+            eliminated_names = self.eliminated_q1 + self.eliminated_q2
+            participating_drivers = [(d, t, p) for d, t, p in all_drivers if d["name"] not in eliminated_names]
+        else:
+            participating_drivers = all_drivers
+
+        # Determine tire compound - Q3 uses softs, Q2 uses player choice (AI uses soft), Q1 uses softs
+        for driver, team_name, player_id in participating_drivers:
             car = self._get_car_for_driver(driver)
-            modifiers = self._weekend_modifiers.get(driver["name"], {})
 
-            entry = {
-                "driver": driver,
-                "car": car,
-                "tire": TireState("soft"),
-                "weekend_form": modifiers.get("weekend_form", 0),
-                "quali_form": modifiers.get("quali_form", 0),
-                "mechanical_issue": modifiers.get("mechanical_issue", False)
-            }
+            # Tire choice for Q2 - AI always uses soft, players could choose (for now AI uses soft)
+            if session_num == "Q2":
+                tire_compound = "soft"  # Default, could add player tire selection for Q2
+                self.q2_tire_choices[driver["name"]] = tire_compound
+            else:
+                tire_compound = "soft"
 
-            # Simulate 3 quali laps
-            lap_times = [self._calculate_lap_time(entry, Weather.DRY, is_qualifying=True) for _ in range(3)]
-            best_time = min(lap_times)
-
-            if random.random() < 0.02:  # 2% incident chance
-                best_time += 5.0
+            best_time = self._simulate_quali_laps(driver, car, tire_compound)
 
             entries.append({
                 "driver_name": driver["name"],
                 "team_name": team_name,
                 "lap_time": best_time,
                 "is_player_driver": player_id is not None,
-                "player_id": player_id
+                "player_id": player_id,
+                "tire_compound": tire_compound
             })
 
         entries.sort(key=lambda x: x["lap_time"])
-        pole_time = entries[0]["lap_time"]
 
-        for i, entry in enumerate(entries):
-            mins = int(entry["lap_time"] // 60)
-            secs = entry["lap_time"] % 60
-            gap = entry["lap_time"] - pole_time
+        if entries:
+            pole_time = entries[0]["lap_time"]
 
-            self.qualifying_results.append({
+            # Format results
+            results = []
+            for i, entry in enumerate(entries):
+                mins = int(entry["lap_time"] // 60)
+                secs = entry["lap_time"] % 60
+                gap = entry["lap_time"] - pole_time
+
+                results.append({
+                    "position": i + 1,
+                    "driver_name": entry["driver_name"],
+                    "team_name": entry["team_name"],
+                    "lap_time": f"{mins}:{secs:06.3f}" if i == 0 else f"+{gap:.3f}",
+                    "lap_time_raw": entry["lap_time"],
+                    "is_player_driver": entry["is_player_driver"],
+                    "player_id": entry["player_id"],
+                    "tire_compound": entry.get("tire_compound", "soft")
+                })
+
+            # Store results in appropriate session
+            if session_num == "Q1":
+                self.q1_results = results
+                # Bottom 5 eliminated (positions 16-20)
+                if len(results) >= 16:
+                    self.eliminated_q1 = [r["driver_name"] for r in results[15:]]
+            elif session_num == "Q2":
+                self.q2_results = results
+                # Bottom 5 eliminated (positions 11-15 overall, but 11-15 of Q2)
+                if len(results) >= 6:
+                    self.eliminated_q2 = [r["driver_name"] for r in results[10:]]
+            elif session_num == "Q3":
+                self.q3_results = results
+
+    def _build_final_qualifying_grid(self, is_for_sprint: bool = False) -> List[Dict]:
+        """Build the final qualifying grid from Q1/Q2/Q3 results."""
+        final_grid = []
+
+        # Q3 results are positions 1-10
+        for i, r in enumerate(self.q3_results[:10]):
+            result = {
                 "position": i + 1,
+                "driver_name": r["driver_name"],
+                "team_name": r["team_name"],
+                "lap_time": r["lap_time"],
+                "is_player_driver": r["is_player_driver"],
+                "player_id": r["player_id"],
+                "eliminated_in": None,
+                "q1_time": self._get_session_time(r["driver_name"], "Q1"),
+                "q2_time": self._get_session_time(r["driver_name"], "Q2"),
+                "q3_time": r["lap_time"],
+                "q2_tire": self.q2_tire_choices.get(r["driver_name"], "soft")
+            }
+            final_grid.append(result)
+
+        # Q2 eliminated are positions 11-15
+        q2_eliminated = [r for r in self.q2_results if r["driver_name"] in self.eliminated_q2]
+        for i, r in enumerate(q2_eliminated[:5]):
+            result = {
+                "position": 11 + i,
+                "driver_name": r["driver_name"],
+                "team_name": r["team_name"],
+                "lap_time": r["lap_time"],
+                "is_player_driver": r["is_player_driver"],
+                "player_id": r["player_id"],
+                "eliminated_in": "Q2",
+                "q1_time": self._get_session_time(r["driver_name"], "Q1"),
+                "q2_time": r["lap_time"],
+                "q3_time": None,
+                "q2_tire": None  # Doesn't apply - they don't start on Q2 tire
+            }
+            final_grid.append(result)
+
+        # Q1 eliminated are positions 16-20
+        q1_eliminated = [r for r in self.q1_results if r["driver_name"] in self.eliminated_q1]
+        for i, r in enumerate(q1_eliminated[:5]):
+            result = {
+                "position": 16 + i,
+                "driver_name": r["driver_name"],
+                "team_name": r["team_name"],
+                "lap_time": r["lap_time"],
+                "is_player_driver": r["is_player_driver"],
+                "player_id": r["player_id"],
+                "eliminated_in": "Q1",
+                "q1_time": r["lap_time"],
+                "q2_time": None,
+                "q3_time": None,
+                "q2_tire": None
+            }
+            final_grid.append(result)
+
+        if is_for_sprint:
+            self.sprint_qualifying_results = final_grid
+        else:
+            self.qualifying_results = final_grid
+            self.main_race_qualifying_results = final_grid
+
+        return final_grid
+
+    def _get_session_time(self, driver_name: str, session: str) -> Optional[str]:
+        """Get a driver's time from a specific session."""
+        if session == "Q1":
+            results = self.q1_results
+        elif session == "Q2":
+            results = self.q2_results
+        elif session == "Q3":
+            results = self.q3_results
+        else:
+            return None
+
+        for r in results:
+            if r["driver_name"] == driver_name:
+                return r["lap_time"]
+        return None
+
+    def advance_qualifying(self, player_id: str = None) -> bool:
+        """Advance to the next qualifying session."""
+        # Handle multiplayer ready check
+        if len(self.players) == 2:
+            if player_id:
+                self.mark_ready(player_id, True)
+            if not self.all_players_ready():
+                return True  # Waiting for other player
+            self.reset_ready()
+
+        is_shootout = self.phase in [
+            GamePhase.SPRINT_SHOOTOUT_Q1,
+            GamePhase.SPRINT_SHOOTOUT_Q2,
+            GamePhase.SPRINT_SHOOTOUT_Q3
+        ]
+
+        if self.phase == GamePhase.QUALIFYING_Q1:
+            self.current_quali_session = "Q2"
+            self._run_qualifying_session("Q2")
+            self.phase = GamePhase.QUALIFYING_Q2
+        elif self.phase == GamePhase.QUALIFYING_Q2:
+            self.current_quali_session = "Q3"
+            self._run_qualifying_session("Q3")
+            self.phase = GamePhase.QUALIFYING_Q3
+        elif self.phase == GamePhase.QUALIFYING_Q3:
+            # Qualifying complete - build final grid and go to tire selection
+            self._build_final_qualifying_grid(is_for_sprint=False)
+            self.phase = GamePhase.TIRE_SELECTION
+        elif self.phase == GamePhase.SPRINT_SHOOTOUT_Q1:
+            self.current_quali_session = "SHOOTOUT_Q2"
+            self._run_qualifying_session("SHOOTOUT_Q2")
+            self.phase = GamePhase.SPRINT_SHOOTOUT_Q2
+        elif self.phase == GamePhase.SPRINT_SHOOTOUT_Q2:
+            self.current_quali_session = "SHOOTOUT_Q3"
+            self._run_qualifying_session("SHOOTOUT_Q3")
+            self.phase = GamePhase.SPRINT_SHOOTOUT_Q3
+        elif self.phase == GamePhase.SPRINT_SHOOTOUT_Q3:
+            # Sprint shootout complete - go to sprint grid
+            self._build_final_qualifying_grid(is_for_sprint=True)
+            self.phase = GamePhase.SPRINT_GRID
+        else:
+            return False
+
+        return True
+
+    def _run_qualifying(self):
+        """Legacy method - runs full qualifying for backwards compatibility."""
+        self._run_qualifying_session("Q1")
+        self._run_qualifying_session("Q2")
+        self._run_qualifying_session("Q3")
+        self._build_final_qualifying_grid()
+
+    # ==================== SPRINT RACE ====================
+
+    def start_sprint_race(self, player_id: str = None) -> bool:
+        """Start the sprint race from the sprint grid."""
+        if self.phase != GamePhase.SPRINT_GRID:
+            return False
+
+        # Handle multiplayer ready check
+        if len(self.players) == 2:
+            if player_id:
+                self.mark_ready(player_id, True)
+            if not self.all_players_ready():
+                return True  # Waiting for other player
+            self.reset_ready()
+
+        track = self._tracks[self.current_race - 1]
+        self.sprint_total_laps = track.get("sprint_laps", 19)
+        self.sprint_current_lap = 0
+        self.sprint_finished = False
+        self.sprint_events = []
+        self.sprint_entries = []
+
+        # Set up race entries from sprint qualifying grid
+        for result in self.sprint_qualifying_results:
+            driver = self._get_driver_by_name(result["driver_name"])
+            if not driver:
+                continue
+
+            car = self._get_car_for_driver(driver)
+            modifiers = self._weekend_modifiers.get(driver["name"], {})
+
+            # Sprint races use medium tires typically
+            self.sprint_entries.append({
+                "driver_name": result["driver_name"],
+                "driver": driver,
+                "team_name": result["team_name"],
+                "car": car,
+                "position": result["position"],
+                "gap": 0.0,
+                "tire": TireState("medium"),
+                "pit_stops": 0,
+                "total_time": 0.0,
+                "weekend_form": modifiers.get("weekend_form", 0),
+                "status": "racing",
+                "dnf": False,
+                "is_player_driver": result["is_player_driver"],
+                "player_id": result["player_id"]
+            })
+
+        self.phase = GamePhase.SPRINT_RACE
+        return True
+
+    def simulate_sprint_lap(self) -> bool:
+        """Simulate one lap of the sprint race."""
+        if self.phase != GamePhase.SPRINT_RACE:
+            return False
+
+        if self.sprint_finished or self.sprint_current_lap >= self.sprint_total_laps:
+            return False
+
+        self.sprint_current_lap += 1
+        track = self._tracks[self.current_race - 1]
+
+        # Simulate lap for each entry (no pit stops in sprint - too short)
+        for entry in self.sprint_entries:
+            if entry["dnf"]:
+                continue
+
+            # Calculate lap time
+            lap_time = self._calculate_lap_time(entry, self.weather)
+
+            # Lower reliability risk in sprint (shorter race)
+            reliability_base = 0.003
+            car = entry["car"]
+            reliability_factor = (100 - car.get("reliability", 70)) / 100
+            dnf_chance = reliability_base * reliability_factor
+
+            if random.random() < dnf_chance:
+                entry["dnf"] = True
+                entry["status"] = "dnf"
+                self.sprint_events.append({
+                    "lap": self.sprint_current_lap,
+                    "type": "dnf",
+                    "driver": entry["driver_name"],
+                    "description": f"{entry['driver_name']} retires from the sprint"
+                })
+                continue
+
+            entry["total_time"] += lap_time
+            entry["tire"].add_wear(track.get("tire_degradation", 1.0) * 0.8)  # Less wear in sprint
+
+        # Sort by total time (DNFs at back)
+        active = [e for e in self.sprint_entries if not e["dnf"]]
+        dnfs = [e for e in self.sprint_entries if e["dnf"]]
+
+        active.sort(key=lambda x: x["total_time"])
+
+        # Calculate gaps
+        if active:
+            leader_time = active[0]["total_time"]
+            for i, entry in enumerate(active):
+                entry["position"] = i + 1
+                entry["gap"] = entry["total_time"] - leader_time
+
+        # DNFs keep their positions at the back
+        for i, entry in enumerate(dnfs):
+            entry["position"] = len(active) + i + 1
+
+        self.sprint_entries = active + dnfs
+
+        # Check overtakes
+        if self.sprint_current_lap > 1:
+            self._check_overtakes(self.sprint_entries, track, is_sprint=True)
+
+        # Check if sprint finished
+        if self.sprint_current_lap >= self.sprint_total_laps:
+            self.sprint_finished = True
+            self._process_sprint_results()
+
+        return True
+
+    def _process_sprint_results(self):
+        """Process sprint race results and award points."""
+        # Sprint points: 8, 7, 6, 5, 4, 3, 2, 1 for positions 1-8
+        sprint_points = [8, 7, 6, 5, 4, 3, 2, 1]
+
+        self.sprint_results = []
+        leader_time = None
+
+        for entry in self.sprint_entries:
+            position = entry["position"]
+            points = sprint_points[position - 1] if position <= 8 else 0
+
+            if position == 1:
+                leader_time = entry["total_time"]
+
+            # Format time/gap
+            if entry["dnf"]:
+                time_str = "DNF"
+            elif position == 1:
+                mins = int(entry["total_time"] // 60)
+                secs = entry["total_time"] % 60
+                time_str = f"{mins}:{secs:06.3f}"
+            else:
+                gap = entry["total_time"] - leader_time if leader_time else 0
+                time_str = f"+{gap:.3f}"
+
+            self.sprint_results.append({
+                "position": position,
                 "driver_name": entry["driver_name"],
                 "team_name": entry["team_name"],
-                "lap_time": f"{mins}:{secs:06.3f}" if i == 0 else f"+{gap:.3f}",
+                "time": time_str,
+                "points": points,
                 "is_player_driver": entry["is_player_driver"],
-                "player_id": entry["player_id"]
+                "player_id": entry["player_id"],
+                "status": entry["status"]
             })
+
+            # Award points to driver and constructor standings
+            if points > 0:
+                self._award_sprint_points(entry["driver_name"], entry["team_name"], points)
+
+        self.phase = GamePhase.SPRINT_RESULTS
+
+    def _award_sprint_points(self, driver_name: str, team_name: str, points: int):
+        """Award sprint points to driver and constructor."""
+        # Update driver standings
+        for ds in self._driver_standings:
+            if ds["driver_name"] == driver_name:
+                ds["points"] += points
+                break
+        else:
+            self._driver_standings.append({
+                "driver_name": driver_name,
+                "team_name": team_name,
+                "points": points,
+                "wins": 0,
+                "podiums": 0,
+                "is_player_driver": False,
+                "player_id": None
+            })
+
+        # Update constructor standings
+        for cs in self._constructor_standings:
+            if cs["team_name"] == team_name:
+                cs["points"] += points
+                break
+        else:
+            self._constructor_standings.append({
+                "team_name": team_name,
+                "points": points,
+                "wins": 0,
+                "is_player_team": False,
+                "player_id": None
+            })
+
+        # Sort standings
+        self._driver_standings.sort(key=lambda x: (-x["points"], -x["wins"]))
+        self._constructor_standings.sort(key=lambda x: (-x["points"], -x["wins"]))
+
+        for i, ds in enumerate(self._driver_standings):
+            ds["position"] = i + 1
+        for i, cs in enumerate(self._constructor_standings):
+            cs["position"] = i + 1
+
+    def advance_from_sprint_results(self, player_id: str = None) -> bool:
+        """Advance from sprint results to main race qualifying."""
+        if self.phase != GamePhase.SPRINT_RESULTS:
+            return False
+
+        # Handle multiplayer ready check
+        if len(self.players) == 2:
+            if player_id:
+                self.mark_ready(player_id, True)
+            if not self.all_players_ready():
+                return True  # Waiting for other player
+            self.reset_ready()
+
+        # Reset qualifying state for main race
+        self.q1_results = []
+        self.q2_results = []
+        self.q3_results = []
+        self.eliminated_q1 = []
+        self.eliminated_q2 = []
+        self.q2_tire_choices = {}
+
+        # Start main race qualifying with Q1
+        self.current_quali_session = "Q1"
+        self._run_qualifying_session("Q1")
+        self.phase = GamePhase.QUALIFYING_Q1
+
+        return True
+
+    def _get_driver_by_name(self, name: str) -> Optional[Dict]:
+        """Get driver data by name."""
+        # Check player teams
+        for team in self.player_teams.values():
+            for d in team["drivers"]:
+                if d["name"] == name:
+                    return d
+
+        # Check all drivers
+        for d in self._all_drivers:
+            if d["name"] == name:
+                return d
+
+        return None
+
+    def _check_overtakes(self, entries: List[Dict], track: Dict, is_sprint: bool = False):
+        """Check for overtakes between entries."""
+        overtake_difficulty = track.get("overtaking_difficulty", 5) / 10.0
+
+        for i in range(1, len(entries)):
+            if entries[i]["dnf"] or entries[i-1]["dnf"]:
+                continue
+
+            behind = entries[i]
+            ahead = entries[i-1]
+
+            # Calculate overtake probability
+            gap = ahead["total_time"] - behind["total_time"]
+            if gap < 0.5:  # Within DRS range
+                behind_driver = behind["driver"]
+                ahead_driver = ahead["driver"]
+
+                overtake_skill = behind_driver["stats"]["overtaking"] / 100
+                defend_skill = ahead_driver["stats"]["defending"] / 100
+                car_diff = (calc_car_overall(behind["car"]) - calc_car_overall(ahead["car"])) / 100
+
+                overtake_chance = 0.1 + (overtake_skill * 0.3) - (defend_skill * 0.2) + (car_diff * 0.2) - (overtake_difficulty * 0.15)
+                overtake_chance = max(0.02, min(0.4, overtake_chance))
+
+                if random.random() < overtake_chance:
+                    # Swap positions
+                    entries[i], entries[i-1] = entries[i-1], entries[i]
+                    entries[i-1]["position"] = i
+                    entries[i]["position"] = i + 1
+
+                    event_list = self.sprint_events if is_sprint else self.race_events
+                    lap = self.sprint_current_lap if is_sprint else self.current_lap
+                    event_list.append({
+                        "lap": lap,
+                        "type": "overtake",
+                        "driver": behind["driver_name"],
+                        "description": f"{behind['driver_name']} overtakes {ahead['driver_name']} for P{i}"
+                    })
 
     def _calculate_lap_time(self, entry: Dict, weather: Weather, is_qualifying: bool = False) -> float:
         """Calculate lap time."""

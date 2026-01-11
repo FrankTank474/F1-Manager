@@ -105,6 +105,25 @@ a:hover {
     color: var(--text-primary);
 }
 
+.navbar-logo {
+    height: 60px;
+    width: auto;
+}
+
+/* Show light logo by default (for light theme) */
+.navbar-logo-dark {
+    display: none;
+}
+
+/* Dark theme: show dark logo, hide light logo */
+[data-theme="dark"] .navbar-logo-light {
+    display: none;
+}
+
+[data-theme="dark"] .navbar-logo-dark {
+    display: block;
+}
+
 .navbar-brand span {
     color: var(--accent-primary);
 }

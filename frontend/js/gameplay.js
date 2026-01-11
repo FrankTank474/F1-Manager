@@ -1,6 +1,7 @@
 // Gameplay module for F1 Manager web version - Full Multiplayer Support
 import { api, ApiError } from './api.js';
 import { escapeHtml, formatDate, showAlert, setButtonLoading } from './utils.js';
+import { modalAlert, modalConfirm } from './modal.js';
 
 // Game phases
 const GamePhase = {
@@ -83,7 +84,8 @@ function renderGameControls(state) {
  */
 function attachGameControlListeners(container, state) {
     document.getElementById('stop-game-btn')?.addEventListener('click', async () => {
-        if (confirm('Stop this game? You can resume it later by clicking Play.')) {
+        const confirmed = await modalConfirm('Stop this game? You can resume it later by clicking Play.', 'Stop Game');
+        if (confirmed) {
             stopRefreshInterval();
             try {
                 await api.post(`/games/${state.game_id}/stop`);
@@ -108,7 +110,7 @@ function startRefreshInterval(gameId, container) {
             // Check if game was stopped by another player
             if (state.game_stopped) {
                 stopRefreshInterval();
-                alert(`Game stopped by ${state.stopped_by || 'another player'}. Returning to lobby.`);
+                await modalAlert(`Game stopped by ${state.stopped_by || 'another player'}. Returning to lobby.`, 'Game Stopped');
                 window.location.hash = '#/games';
                 return;
             }
@@ -161,8 +163,8 @@ function renderGameScreen(container, state) {
 
     // Check if game was stopped
     if (state.game_stopped) {
-        alert(`Game stopped by ${state.stopped_by || 'another player'}. Returning to lobby.`);
-        window.location.hash = '#/games';
+        modalAlert(`Game stopped by ${state.stopped_by || 'another player'}. Returning to lobby.`, 'Game Stopped')
+            .then(() => { window.location.hash = '#/games'; });
         return;
     }
 
@@ -584,7 +586,8 @@ function renderDriverSelection(container, state) {
             const driverName = btn.dataset.driverName;
             const salary = parseFloat(btn.dataset.salary);
 
-            if (confirm(`Sign ${driverName} for $${salary.toFixed(1)}M/year?`)) {
+            const confirmed = await modalConfirm(`Sign ${driverName} for $${salary.toFixed(1)}M/year?`, 'Sign Driver');
+            if (confirmed) {
                 setButtonLoading(btn, true);
                 try {
                     const newState = await api.post(`/gameplay/${state.game_id}/sign-driver`, {
@@ -3159,7 +3162,8 @@ function renderTransferWindow(container, state) {
             const driverId = btn.dataset.driverId;
             const driverName = btn.dataset.driverName;
 
-            if (confirm(`Release ${driverName}? This cannot be undone.`)) {
+            const confirmed = await modalConfirm(`Release ${driverName}? This cannot be undone.`, 'Release Driver');
+            if (confirmed) {
                 setButtonLoading(btn, true);
                 try {
                     const newState = await api.post(`/gameplay/${state.game_id}/transfer-release-driver`, {
@@ -3181,7 +3185,8 @@ function renderTransferWindow(container, state) {
             const driverName = btn.dataset.driverName;
             const salary = parseFloat(btn.dataset.salary);
 
-            if (confirm(`Sign ${driverName} for $${salary.toFixed(1)}M/year?`)) {
+            const confirmed = await modalConfirm(`Sign ${driverName} for $${salary.toFixed(1)}M/year?`, 'Sign Driver');
+            if (confirmed) {
                 setButtonLoading(btn, true);
                 try {
                     const newState = await api.post(`/gameplay/${state.game_id}/transfer-sign-driver`, {
@@ -3203,7 +3208,8 @@ function renderTransferWindow(container, state) {
     container.querySelector('.skip-transfer-btn').addEventListener('click', async () => {
         const btn = container.querySelector('.skip-transfer-btn');
         if (drivers.length < 2) {
-            if (!confirm('You only have 1 driver. Are you sure you want to continue without signing another?')) {
+            const confirmed = await modalConfirm('You only have 1 driver. Are you sure you want to continue without signing another?', 'Continue with 1 Driver');
+            if (!confirmed) {
                 return;
             }
         }

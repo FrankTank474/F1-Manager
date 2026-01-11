@@ -1,0 +1,124 @@
+/* Modal Component Styles */
+
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0.2s ease;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+.modal-overlay.modal-visible {
+    opacity: 1;
+    visibility: visible;
+}
+
+.modal {
+    background-color: var(--bg-card);
+    border-radius: var(--radius-lg);
+    padding: var(--space-xl);
+    max-width: 420px;
+    width: 90%;
+    text-align: center;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    transform: scale(0.9) translateY(20px);
+    transition: transform 0.2s ease;
+    border: 1px solid var(--border-color);
+}
+
+.modal-overlay.modal-visible .modal {
+    transform: scale(1) translateY(0);
+}
+
+.modal-icon {
+    width: 56px;
+    height: 56px;
+    margin: 0 auto var(--space-lg);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-icon svg {
+    width: 28px;
+    height: 28px;
+}
+
+.modal-icon-info {
+    background-color: rgba(52, 152, 219, 0.15);
+    color: #3498db;
+}
+
+.modal-icon-warning {
+    background-color: rgba(241, 196, 15, 0.15);
+    color: #f1c40f;
+}
+
+.modal-icon-error {
+    background-color: rgba(231, 76, 60, 0.15);
+    color: #e74c3c;
+}
+
+.modal-icon-success {
+    background-color: rgba(46, 204, 113, 0.15);
+    color: #2ecc71;
+}
+
+.modal-title {
+    font-size: var(--font-xl);
+    font-weight: 600;
+    margin-bottom: var(--space-sm);
+    color: var(--text-primary);
+}
+
+.modal-message {
+    font-size: var(--font-base);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-xl);
+    line-height: 1.6;
+}
+
+.modal-buttons {
+    display: flex;
+    gap: var(--space-md);
+    justify-content: center;
+}
+
+.modal-buttons .btn {
+    min-width: 100px;
+    flex: 1;
+    max-width: 150px;
+}
+
+/* Single button should be centered and not too wide */
+.modal-buttons .btn:only-child {
+    flex: 0 1 auto;
+    min-width: 120px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 480px) {
+    .modal {
+        padding: var(--space-lg);
+        margin: var(--space-md);
+    }
+
+    .modal-buttons {
+        flex-direction: column;
+    }
+
+    .modal-buttons .btn {
+        max-width: none;
+    }
+}

@@ -56,6 +56,10 @@ if frontend_path.exists():
     app.mount("/css", StaticFiles(directory=frontend_path / "css"), name="css")
     app.mount("/js", StaticFiles(directory=frontend_path / "js"), name="js")
 
+    # Serve images
+    if (frontend_path / "img").exists():
+        app.mount("/img", StaticFiles(directory=frontend_path / "img"), name="img")
+
     # Serve components and pages as static files
     if (frontend_path / "components").exists():
         app.mount(

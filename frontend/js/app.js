@@ -4,6 +4,7 @@ import { router } from './router.js';
 import { showAlert, setButtonLoading, validatePassword, validateUsername, isValidEmail, formatDate, clearAlerts, escapeHtml, debounce } from './utils.js';
 import { api, ApiError } from './api.js';
 import { startGameSession } from './gameplay.js';
+import { modalConfirm } from './modal.js';
 
 // Theme management
 function initTheme() {
@@ -402,7 +403,8 @@ async function loadGames() {
                 e.preventDefault();
                 const gameId = btn.dataset.gameId;
                 const gameName = btn.dataset.gameName;
-                if (!confirm(`Are you sure you want to delete "${gameName}"? This cannot be undone.`)) return;
+                const confirmed = await modalConfirm(`Are you sure you want to delete "${gameName}"? This cannot be undone.`, 'Delete Game');
+                if (!confirmed) return;
 
                 setButtonLoading(btn, true);
                 try {
@@ -603,7 +605,8 @@ async function gameDetailPage(container, gameId) {
         if (isCreator && game.status === 'pending') {
             // Start game
             document.getElementById('start-game-btn')?.addEventListener('click', async () => {
-                if (!confirm('Are you sure you want to start this game?')) return;
+                const confirmed = await modalConfirm('Are you sure you want to start this game?', 'Start Game');
+                if (!confirmed) return;
                 const btn = document.getElementById('start-game-btn');
                 setButtonLoading(btn, true);
                 try {
@@ -617,7 +620,8 @@ async function gameDetailPage(container, gameId) {
 
             // Delete game
             document.getElementById('delete-game-btn')?.addEventListener('click', async () => {
-                if (!confirm('Are you sure you want to delete this game? This cannot be undone.')) return;
+                const confirmed = await modalConfirm('Are you sure you want to delete this game? This cannot be undone.', 'Delete Game');
+                if (!confirmed) return;
                 const btn = document.getElementById('delete-game-btn');
                 setButtonLoading(btn, true);
                 try {

@@ -3845,6 +3845,7 @@ class MultiplayerGameState:
             drivers_needed=drivers_needed,
             rival_teams=rival_teams_info,
             news_headlines=news_headlines,
+            weather_forecast=self.weather.value if self.phase == GamePhase.TIRE_SELECTION else None,
             game_stopped=self.game_stopped,
             stopped_by=self.stopped_by
         )

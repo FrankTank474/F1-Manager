@@ -2053,11 +2053,21 @@ function renderTireSelection(container, state) {
     const opponentReady = otherPlayer?.is_ready;
     const bothReady = isMultiplayer ? (imReady && opponentReady) : true;
 
+    // Weather info
+    const weather = state.weather_forecast || 'dry';
+    const weatherIcon = weather === 'light_rain' ? '🌧️' : weather === 'heavy_rain' ? '⛈️' : '☀️';
+    const weatherText = weather.replace('_', ' ').toUpperCase();
+    const isWet = weather !== 'dry';
+
     container.innerHTML = `
         <div class="game-container">
             <div class="game-header">
                 <h1>Select Starting Tires</h1>
                 <p class="text-secondary">${escapeHtml(state.current_track?.name || 'Unknown Track')}</p>
+                <div class="weather-forecast ${isWet ? 'rain-warning' : ''}">
+                    <span class="weather-icon">${weatherIcon}</span>
+                    <span class="weather-text">${weatherText}</span>
+                </div>
             </div>
 
             <div class="game-content">

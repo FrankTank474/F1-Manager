@@ -644,6 +644,9 @@ class GameStateResponse(BaseModel):
     # Messages/notifications
     notifications: List[str] = []
 
+    # Weather forecast for tire selection
+    weather_forecast: Optional[str] = None  # dry, light_rain, heavy_rain
+
     # Game stopped flag (for multiplayer sync - redirect to lobby)
     game_stopped: bool = False
     stopped_by: Optional[str] = None  # Username of player who stopped

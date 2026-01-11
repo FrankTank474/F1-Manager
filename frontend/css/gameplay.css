@@ -1849,7 +1849,8 @@
 .pit-btn.tire-wet { background: #3498db; color: white; }
 
 /* Weather warning */
-.weather-indicator.rain-warning {
+.weather-indicator.rain-warning,
+.weather-forecast.rain-warning {
     background: #3498db;
     color: white;
     animation: pulse-rain 1.5s infinite;
@@ -1858,6 +1859,23 @@
 @keyframes pulse-rain {
     0%, 100% { box-shadow: 0 0 5px rgba(52, 152, 219, 0.5); }
     50% { box-shadow: 0 0 15px rgba(52, 152, 219, 0.8); }
+}
+
+/* Weather forecast on tire selection */
+.weather-forecast {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-top: var(--space-md);
+    padding: var(--space-sm) var(--space-lg);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    font-size: var(--font-lg);
+    font-weight: 500;
+}
+
+.weather-forecast .weather-icon {
+    font-size: var(--font-xl);
 }
 
 /* ==================== RACE RESULTS ==================== */

@@ -45,7 +45,7 @@ except ImportError as e:
 
 # ==================== CONSTANTS ====================
 
-POINTS_SYSTEM = {1: 25, 2: 18, 3: 15, 4: 12, 5: 10, 6: 8, 7: 6, 8: 4, 9: 2, 10: 1}
+POINTS_SYSTEM = {1: 30, 2: 26, 3: 22, 4: 18, 5: 16, 6: 14, 7: 12, 8: 10, 9: 8, 10: 6, 11: 5, 12: 4, 13: 3, 14: 2, 15: 1}
 
 RACE_PRIZE_MONEY = {
     1: 3.75, 2: 2.75, 3: 2.25, 4: 1.85, 5: 1.5, 6: 1.2, 7: 1.0, 8: 0.85, 9: 0.7, 10: 0.6
@@ -779,8 +779,8 @@ class MultiplayerGameState:
             "name": default_team_name,
             "budget": 50.0,
             # Backmarker car stats - starting from the back of the grid
-            "car": {"downforce": 66, "aero_efficiency": 64, "chassis": 67,
-                    "power_unit": 65, "reliability": 70, "tire_cooling": 64},
+            "car": {"downforce": 69, "aero_efficiency": 67, "chassis": 70,
+                    "power_unit": 68, "reliability": 73, "tire_cooling": 67},
             "drivers": [],
             "season_points": 0,
             "race_wins": 0,

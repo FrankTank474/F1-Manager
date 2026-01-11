@@ -1160,28 +1160,154 @@ function renderTireSelection(container, state) {
 
 // Track race simulation state
 let raceAutoSimulating = false;
-let lastWeather = 'dry';
 
 /**
- * Race In Progress Screen - Auto-simulates, pauses for pit decisions
+ * Race In Progress Screen - Server-controlled with multiplayer sync
  */
 function renderRaceInProgress(container, state) {
     const raceState = state.race_state;
     const playerDrivers = state.player_team?.drivers || [];
+    const isMultiplayer = state.is_multiplayer;
+    const pitStatus = raceState?.pit_decision_status;
+
+    // Get player positions for display
     const playerPositions = raceState?.positions?.filter(p => p.player_id === state.your_player_id && p.status !== 'dnf') || [];
 
-    // Check if we need to pause for pit decision
-    const needsPitDecision = checkNeedsPitDecision(playerPositions, raceState);
-    const weatherChanged = lastWeather !== raceState?.weather && raceState?.weather !== 'dry';
-    const shouldPause = needsPitDecision || weatherChanged;
+    // Multiplayer pit sync status
+    const pausedForPits = pitStatus?.paused_for_pits || false;
+    const iNeedToDecide = pitStatus?.i_need_to_decide || false;
+    const iHaveConfirmed = pitStatus?.i_have_confirmed || true;
+    const waitingForPlayers = pitStatus?.waiting_for_players || [];
+    const myDriversNeedingPit = pitStatus?.my_drivers_needing_pit || [];
 
     // Weather indicator
     const weatherIcon = raceState?.weather === 'light_rain' ? '🌧️' :
                        raceState?.weather === 'heavy_rain' ? '⛈️' : '☀️';
     const weatherText = raceState?.weather?.replace('_', ' ').toUpperCase() || 'DRY';
 
-    // Update last weather
-    lastWeather = raceState?.weather || 'dry';
+    // Single player pit decision check (client-side)
+    const singlePlayerNeedsPit = !isMultiplayer && checkNeedsPitDecision(playerPositions, raceState);
+
+    // Determine what UI to show
+    let pitUI = '';
+
+    if (isMultiplayer && pausedForPits) {
+        // MULTIPLAYER: Server-controlled pit sync
+        if (iNeedToDecide) {
+            // I need to make pit decisions
+            pitUI = `
+                <div class="pit-alert card mb-lg">
+                    <div class="alert-header">
+                        <span class="alert-icon">⚠️</span>
+                        <h3>Pit Decision Required</h3>
+                        <p>Choose to pit or stay out for your drivers</p>
+                    </div>
+                    <div class="pit-driver-controls">
+                        ${playerPositions.filter(p => myDriversNeedingPit.includes(playerDrivers.find(d => d.name === p.driver_name)?.id)).map(p => {
+                            const driver = playerDrivers.find(d => d.name === p.driver_name);
+                            const gripLevel = getGripLevel(p.tire_wear);
+                            return `
+                                <div class="pit-driver-card needs-pit" data-driver-id="${driver?.id}">
+                                    <div class="pit-driver-info">
+                                        <strong>${escapeHtml(p.driver_name)}</strong>
+                                        <span class="pit-status">P${p.position} | ${p.tire.toUpperCase()} | Wear: ${p.tire_wear}% (${gripLevel})</span>
+                                    </div>
+                                    <div class="pit-buttons">
+                                        ${raceState?.weather === 'dry' ? `
+                                            <button class="btn btn-sm pit-btn tire-soft" data-driver="${driver?.id}" data-compound="soft">Soft</button>
+                                            <button class="btn btn-sm pit-btn tire-medium" data-driver="${driver?.id}" data-compound="medium">Medium</button>
+                                            <button class="btn btn-sm pit-btn tire-hard" data-driver="${driver?.id}" data-compound="hard">Hard</button>
+                                        ` : `
+                                            <button class="btn btn-sm pit-btn tire-intermediate" data-driver="${driver?.id}" data-compound="intermediate">Inters</button>
+                                            <button class="btn btn-sm pit-btn tire-wet" data-driver="${driver?.id}" data-compound="wet">Wets</button>
+                                        `}
+                                        <button class="btn btn-sm btn-secondary skip-pit-btn" data-driver="${driver?.id}">Stay Out</button>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                    <button class="btn btn-primary btn-block mt-lg" id="confirm-decisions-btn">
+                        Confirm Decisions
+                    </button>
+                </div>
+            `;
+        } else if (waitingForPlayers.length > 0) {
+            // Waiting for opponent to make their decisions
+            pitUI = `
+                <div class="pit-alert card mb-lg waiting-opponent-pit">
+                    <div class="alert-header">
+                        <div class="spinner-small"></div>
+                        <h3>Waiting for Opponent</h3>
+                        <p>Waiting for ${escapeHtml(waitingForPlayers.join(', '))} to make pit decisions...</p>
+                    </div>
+                </div>
+            `;
+        } else if (!iHaveConfirmed) {
+            // I haven't confirmed yet but have no drivers needing pit
+            pitUI = `
+                <div class="pit-alert card mb-lg">
+                    <div class="alert-header">
+                        <span class="alert-icon">⏳</span>
+                        <h3>Pit Stop Window</h3>
+                        <p>Your opponent needs to make a pit decision. You can wait or continue when ready.</p>
+                    </div>
+                    <button class="btn btn-primary btn-block mt-lg" id="confirm-decisions-btn">
+                        Continue
+                    </button>
+                </div>
+            `;
+        }
+    } else if (!isMultiplayer && singlePlayerNeedsPit) {
+        // SINGLE PLAYER: Client-side pit decision
+        pitUI = `
+            <div class="pit-alert card mb-lg">
+                <div class="alert-header">
+                    <span class="alert-icon">⚠️</span>
+                    <h3>Pit Stop Recommended</h3>
+                    <p>One or more drivers have high tire wear or wrong tires for conditions</p>
+                </div>
+                <div class="pit-driver-controls">
+                    ${playerPositions.filter(p => p.tire_wear >= 70 || (raceState?.weather !== 'dry' && !['intermediate', 'wet'].includes(p.tire))).map(p => {
+                        const driver = playerDrivers.find(d => d.name === p.driver_name);
+                        const gripLevel = getGripLevel(p.tire_wear);
+                        return `
+                            <div class="pit-driver-card needs-pit" data-driver-id="${driver?.id}">
+                                <div class="pit-driver-info">
+                                    <strong>${escapeHtml(p.driver_name)}</strong>
+                                    <span class="pit-status">P${p.position} | ${p.tire.toUpperCase()} | Wear: ${p.tire_wear}% (${gripLevel})</span>
+                                </div>
+                                <div class="pit-buttons">
+                                    ${raceState?.weather === 'dry' ? `
+                                        <button class="btn btn-sm pit-btn tire-soft" data-driver="${driver?.id}" data-compound="soft">Soft</button>
+                                        <button class="btn btn-sm pit-btn tire-medium" data-driver="${driver?.id}" data-compound="medium">Medium</button>
+                                        <button class="btn btn-sm pit-btn tire-hard" data-driver="${driver?.id}" data-compound="hard">Hard</button>
+                                    ` : `
+                                        <button class="btn btn-sm pit-btn tire-intermediate" data-driver="${driver?.id}" data-compound="intermediate">Inters</button>
+                                        <button class="btn btn-sm pit-btn tire-wet" data-driver="${driver?.id}" data-compound="wet">Wets</button>
+                                    `}
+                                    <button class="btn btn-sm btn-secondary skip-pit-btn" data-driver="${driver?.id}">Stay Out</button>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+                <button class="btn btn-primary btn-block mt-lg" id="continue-race-btn">
+                    Continue Race
+                </button>
+            </div>
+        `;
+    } else if (!pausedForPits && !singlePlayerNeedsPit) {
+        // Race is running (no pit decisions needed)
+        pitUI = `
+            <div class="race-simulating card mb-lg">
+                <div class="simulating-status">
+                    <div class="spinner-small"></div>
+                    <span>Race in progress - Lap ${raceState?.current_lap || 0}/${raceState?.total_laps || 0}</span>
+                </div>
+            </div>
+        `;
+    }
 
     container.innerHTML = `
         <div class="game-container race-screen">
@@ -1200,59 +1326,7 @@ function renderRaceInProgress(container, state) {
             </div>
 
             <div class="game-content">
-                ${shouldPause && playerPositions.length > 0 ? `
-                    <div class="pit-alert card mb-lg ${weatherChanged ? 'weather-alert' : 'tire-alert'}">
-                        <div class="alert-header">
-                            ${weatherChanged ? `
-                                <span class="alert-icon">⛈️</span>
-                                <h3>Weather Change!</h3>
-                                <p>Rain has started - consider switching to wet tires</p>
-                            ` : `
-                                <span class="alert-icon">⚠️</span>
-                                <h3>Pit Stop Recommended</h3>
-                                <p>One or more drivers have high tire wear</p>
-                            `}
-                        </div>
-                        <div class="pit-driver-controls">
-                            ${playerPositions.map(p => {
-                                const driver = playerDrivers.find(d => d.name === p.driver_name);
-                                const gripLevel = getGripLevel(p.tire_wear);
-                                const isWrongTire = (raceState?.weather !== 'dry' && !['intermediate', 'wet'].includes(p.tire)) ||
-                                                   (raceState?.weather === 'dry' && ['intermediate', 'wet'].includes(p.tire));
-                                const needsPit = p.tire_wear >= 70 || isWrongTire;
-                                return `
-                                    <div class="pit-driver-card ${needsPit ? 'needs-pit' : ''}">
-                                        <div class="pit-driver-info">
-                                            <strong>${escapeHtml(p.driver_name)}</strong>
-                                            <span class="pit-status">P${p.position} | ${p.tire.toUpperCase()} | Wear: ${p.tire_wear}% (${gripLevel})</span>
-                                        </div>
-                                        <div class="pit-buttons">
-                                            ${raceState?.weather === 'dry' ? `
-                                                <button class="btn btn-sm pit-btn tire-soft" data-driver="${driver?.id}" data-compound="soft">Soft</button>
-                                                <button class="btn btn-sm pit-btn tire-medium" data-driver="${driver?.id}" data-compound="medium">Medium</button>
-                                                <button class="btn btn-sm pit-btn tire-hard" data-driver="${driver?.id}" data-compound="hard">Hard</button>
-                                            ` : `
-                                                <button class="btn btn-sm pit-btn tire-intermediate" data-driver="${driver?.id}" data-compound="intermediate">Inters</button>
-                                                <button class="btn btn-sm pit-btn tire-wet" data-driver="${driver?.id}" data-compound="wet">Wets</button>
-                                            `}
-                                            <button class="btn btn-sm btn-secondary skip-pit-btn" data-driver="${driver?.id}">Stay Out</button>
-                                        </div>
-                                    </div>
-                                `;
-                            }).join('')}
-                        </div>
-                        <button class="btn btn-primary btn-block mt-lg" id="continue-race-btn">
-                            Continue Race
-                        </button>
-                    </div>
-                ` : `
-                    <div class="race-simulating card mb-lg">
-                        <div class="simulating-status">
-                            <div class="spinner-small"></div>
-                            <span>Race in progress...</span>
-                        </div>
-                    </div>
-                `}
+                ${pitUI}
 
                 <div class="race-positions card">
                     <table class="race-table">
@@ -1323,14 +1397,37 @@ function renderRaceInProgress(container, state) {
         });
     });
 
-    // Continue race after pit decisions
+    // Confirm decisions button (multiplayer sync)
+    document.getElementById('confirm-decisions-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('confirm-decisions-btn');
+        setButtonLoading(btn, true);
+        try {
+            // Confirm our pit decisions
+            await api.post(`/gameplay/${state.game_id}/confirm-pit-decisions`);
+            // Refresh state
+            const newState = await api.get(`/gameplay/${state.game_id}/state`);
+            renderGameScreen(container, newState);
+        } catch (error) {
+            showAlert(container.querySelector('.game-content'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
+
+    // Single player continue race button
     document.getElementById('continue-race-btn')?.addEventListener('click', () => {
         autoSimulateRace(container, state.game_id);
     });
 
-    // Auto-start simulation if no pit decision needed
-    if (!shouldPause && !raceState?.is_finished) {
+    // Auto-simulate race when not paused for pits
+    const shouldAutoSimulate = !raceState?.is_finished &&
+        (isMultiplayer ? !pausedForPits : !singlePlayerNeedsPit);
+    if (shouldAutoSimulate) {
         autoSimulateRace(container, state.game_id);
+    }
+
+    // Start refresh interval when waiting for opponent's pit decisions (multiplayer)
+    if (isMultiplayer && pausedForPits && !iNeedToDecide && waitingForPlayers.length > 0) {
+        startRefreshInterval(state.game_id, container);
     }
 }
 
@@ -1364,6 +1461,8 @@ function getGripLevel(wear) {
 
 /**
  * Auto-simulate race until pit decision needed or race ends
+ * Server controls pit decision pauses for multiplayer sync
+ * Client controls pit decisions for single player
  */
 async function autoSimulateRace(container, gameId) {
     if (raceAutoSimulating) return;
@@ -1375,14 +1474,27 @@ async function autoSimulateRace(container, gameId) {
         // Keep simulating until we need to pause
         while (state.phase === GamePhase.RACE_IN_PROGRESS) {
             const raceState = state.race_state;
-            const playerPositions = raceState?.positions?.filter(p => p.player_id === state.your_player_id && p.status !== 'dnf') || [];
+            const pitStatus = raceState?.pit_decision_status;
+            const isMultiplayer = state.is_multiplayer;
 
-            // Check if we need to pause
-            const needsPit = checkNeedsPitDecision(playerPositions, raceState);
-            const weatherChanged = lastWeather !== raceState?.weather && raceState?.weather !== 'dry';
-
-            if (needsPit || weatherChanged || raceState?.is_finished) {
+            // Check if race finished
+            if (raceState?.is_finished || raceState?.current_lap >= raceState?.total_laps) {
                 break;
+            }
+
+            // MULTIPLAYER: Server tells us when to pause
+            if (isMultiplayer && pitStatus?.paused_for_pits) {
+                break;
+            }
+
+            // SINGLE PLAYER: Client-side pit check
+            if (!isMultiplayer) {
+                const playerPositions = raceState?.positions?.filter(p =>
+                    p.player_id === state.your_player_id && p.status !== 'dnf'
+                ) || [];
+                if (checkNeedsPitDecision(playerPositions, raceState)) {
+                    break;
+                }
             }
 
             // Small delay for visual effect

@@ -1667,6 +1667,23 @@
     border: 2px solid var(--warning);
 }
 
+.pit-alert.waiting-opponent-pit {
+    background: linear-gradient(135deg, var(--bg-card) 0%, rgba(155, 89, 182, 0.2) 100%);
+    border: 2px solid #9b59b6;
+}
+
+.pit-alert.waiting-opponent-pit .alert-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-md);
+}
+
+.pit-alert.waiting-opponent-pit .spinner-small {
+    width: 32px;
+    height: 32px;
+}
+
 .alert-header {
     text-align: center;
     margin-bottom: var(--space-lg);

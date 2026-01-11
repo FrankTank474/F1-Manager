@@ -299,6 +299,21 @@ async def make_pit_stop(
     return game_state.get_state_response(user_id)
 
 
+@router.post("/{game_id}/confirm-pit-decisions", response_model=GameStateResponse)
+async def confirm_pit_decisions(
+    game_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Confirm pit decisions (after pitting or choosing to stay out) for multiplayer sync."""
+    game_state = get_game_state(game_id, user_id)
+
+    if game_state.phase != GamePhase.RACE_IN_PROGRESS:
+        raise HTTPException(status_code=400, detail="Race not in progress")
+
+    game_state.confirm_pit_decisions(user_id)
+    return game_state.get_state_response(user_id)
+
+
 @router.post("/{game_id}/simulate-race", response_model=GameStateResponse)
 async def simulate_full_race(
     game_id: str,

@@ -12,7 +12,8 @@ from ..models.game_state import (
     ContractStatus, DriverStats, ContractDemand, DriverContract, DriverInfo, MarketDriver,
     CarStats, UpgradeOption, DevelopmentNode, DevelopmentTree, SponsorObjective, SponsorInfo,
     TeamInfo, InboxMessage, TrackInfo, QualifyingResult, RaceEntry, RaceEvent, RaceState,
-    RaceResult, SeasonCalendarEntry, DriverStanding, ConstructorStanding, PlayerState, TurnInfo
+    RaceResult, SeasonCalendarEntry, DriverStanding, ConstructorStanding, PlayerState, TurnInfo,
+    PitDecisionStatus
 )
 
 # Add src/data to path to import driver/track data
@@ -300,11 +301,20 @@ class MultiplayerGameState:
         self.total_laps = 0
         self.race_finished = False
         self.weather = Weather.DRY
+        self.last_weather = Weather.DRY  # Track weather changes
         self.safety_car = False
         self.safety_car_laps = 0
 
         # Tire selections - player_id -> {driver_id: compound}
         self.player_tire_selections: Dict[str, Dict[str, str]] = {}
+
+        # Synchronized pit decision tracking for multiplayer
+        # player_id -> list of driver_ids needing pit decision
+        self.pit_decisions_needed: Dict[str, List[str]] = {}
+        # player_id -> True if they've confirmed their pit decisions (or chose to stay out)
+        self.pit_decisions_confirmed: Dict[str, bool] = {}
+        # Whether we're currently paused for pit decisions
+        self.race_paused_for_pits = False
 
         # Weekend modifiers
         self._weekend_modifiers: Dict[str, Dict] = {}
@@ -1160,10 +1170,111 @@ class MultiplayerGameState:
                         })
                 pos += 1
 
+    def can_simulate_lap(self) -> bool:
+        """Check if race simulation can proceed."""
+        if self.phase != GamePhase.RACE_IN_PROGRESS:
+            return False
+        if self.race_paused_for_pits:
+            # Check if all players have confirmed their decisions
+            for pid in self.players:
+                if pid in self.pit_decisions_needed and self.pit_decisions_needed[pid]:
+                    if not self.pit_decisions_confirmed.get(pid, False):
+                        return False
+            # All confirmed, unpause
+            self.race_paused_for_pits = False
+            self.pit_decisions_needed = {}
+            self.pit_decisions_confirmed = {}
+        return True
+
+    def _check_driver_needs_pit(self, entry: Dict) -> bool:
+        """Check if a driver needs a pit decision."""
+        if entry["dnf"]:
+            return False
+
+        # High tire wear (70% or more)
+        if entry["tire"].wear >= 70:
+            return True
+
+        # Wrong tires for weather
+        is_wet = self.weather != Weather.DRY
+        has_wet_tires = entry["tire"].compound in ["intermediate", "wet"]
+
+        if is_wet and not has_wet_tires:
+            return True
+
+        # Weather just changed to dry and on wet tires
+        if not is_wet and has_wet_tires and entry["pit_stops"] > 0:
+            return True
+
+        return False
+
+    def _check_all_pit_decisions(self):
+        """Check if any player drivers need pit decisions and pause if so."""
+        if len(self.players) < 2:
+            return  # Single player doesn't need sync
+
+        weather_changed = self.weather != self.last_weather and self.weather != Weather.DRY
+
+        pit_needed = {}
+        for entry in self.race_entries:
+            if not entry.get("is_player_driver") or entry["dnf"]:
+                continue
+
+            player_id = entry.get("player_id")
+            if not player_id:
+                continue
+
+            if self._check_driver_needs_pit(entry) or weather_changed:
+                if player_id not in pit_needed:
+                    pit_needed[player_id] = []
+                pit_needed[player_id].append(entry["driver"]["id"])
+
+        # If ANY player needs a pit decision, pause for ALL players
+        if pit_needed:
+            self.race_paused_for_pits = True
+            self.pit_decisions_needed = pit_needed
+            self.pit_decisions_confirmed = {pid: False for pid in self.players}
+            # Players who don't need pit decisions are auto-confirmed
+            for pid in self.players:
+                if pid not in pit_needed:
+                    self.pit_decisions_confirmed[pid] = True
+
+        self.last_weather = self.weather
+
+    def confirm_pit_decisions(self, player_id: str) -> bool:
+        """Player confirms they've made all their pit decisions (pit or stay out)."""
+        if player_id not in self.players:
+            return False
+        self.pit_decisions_confirmed[player_id] = True
+        return True
+
+    def get_pit_decision_status(self, player_id: str) -> Dict:
+        """Get pit decision status for a player."""
+        my_drivers_needing_pit = self.pit_decisions_needed.get(player_id, [])
+
+        # Check who we're waiting for
+        waiting_for = []
+        for pid, confirmed in self.pit_decisions_confirmed.items():
+            if not confirmed and pid != player_id:
+                waiting_for.append(self.players[pid]["username"])
+
+        return {
+            "paused_for_pits": self.race_paused_for_pits,
+            "my_drivers_needing_pit": my_drivers_needing_pit,
+            "i_need_to_decide": player_id in self.pit_decisions_needed and not self.pit_decisions_confirmed.get(player_id, True),
+            "i_have_confirmed": self.pit_decisions_confirmed.get(player_id, True),
+            "waiting_for_players": waiting_for,
+            "all_confirmed": all(self.pit_decisions_confirmed.values()) if self.pit_decisions_confirmed else True
+        }
+
     def simulate_race_lap(self, player_id: str = None):
         """Simulate one lap."""
         if self.phase != GamePhase.RACE_IN_PROGRESS:
             return
+
+        # Check if we can simulate (not paused for pit decisions)
+        if not self.can_simulate_lap():
+            return  # Race paused, waiting for pit decisions
 
         self.current_lap += 1
         track = self._tracks[self.current_race - 1]
@@ -1252,6 +1363,10 @@ class MultiplayerGameState:
         for i, entry in enumerate(active):
             entry["position"] = i + 1
             entry["gap"] = "Leader" if i == 0 else f"+{entry['total_time'] - active[0]['total_time']:.1f}s"
+
+        # Check if any player needs pit decision (multiplayer sync)
+        if self.current_lap < self.total_laps:
+            self._check_all_pit_decisions()
 
         if self.current_lap >= self.total_laps:
             self._finish_race()
@@ -1677,6 +1792,19 @@ class MultiplayerGameState:
                     player_id=entry.get("player_id")
                 ))
 
+            # Build pit decision status for multiplayer
+            pit_status = None
+            if len(self.players) >= 2:
+                pit_info = self.get_pit_decision_status(player_id)
+                pit_status = PitDecisionStatus(
+                    paused_for_pits=pit_info["paused_for_pits"],
+                    my_drivers_needing_pit=pit_info["my_drivers_needing_pit"],
+                    i_need_to_decide=pit_info["i_need_to_decide"],
+                    i_have_confirmed=pit_info["i_have_confirmed"],
+                    waiting_for_players=pit_info["waiting_for_players"],
+                    all_confirmed=pit_info["all_confirmed"]
+                )
+
             race_state = RaceState(
                 current_lap=self.current_lap,
                 total_laps=self.total_laps,
@@ -1684,7 +1812,8 @@ class MultiplayerGameState:
                 events=[RaceEvent(lap=e["lap"], event_type=e["event_type"], description=e["description"]) for e in self.race_events[-30:]],
                 weather=self.weather.value,
                 safety_car=self.safety_car,
-                safety_car_laps=self.safety_car_laps
+                safety_car_laps=self.safety_car_laps,
+                pit_decision_status=pit_status
             )
 
         # Standings

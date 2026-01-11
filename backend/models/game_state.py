@@ -334,6 +334,16 @@ class RaceEvent(BaseModel):
     driver_name: Optional[str] = None
 
 
+class PitDecisionStatus(BaseModel):
+    """Status of pit decisions for multiplayer sync."""
+    paused_for_pits: bool = False  # Race is paused waiting for pit decisions
+    my_drivers_needing_pit: List[str] = []  # Driver IDs that need pit decision
+    i_need_to_decide: bool = False  # This player needs to make a decision
+    i_have_confirmed: bool = True  # This player has confirmed their decisions
+    waiting_for_players: List[str] = []  # Usernames of players we're waiting for
+    all_confirmed: bool = True  # All players have confirmed
+
+
 class RaceState(BaseModel):
     """Current state of an ongoing race."""
     current_lap: int
@@ -344,6 +354,9 @@ class RaceState(BaseModel):
     weather: str = "dry"
     safety_car: bool = False
     safety_car_laps: int = 0
+
+    # Multiplayer pit decision sync
+    pit_decision_status: Optional[PitDecisionStatus] = None
 
 
 class RaceResult(BaseModel):

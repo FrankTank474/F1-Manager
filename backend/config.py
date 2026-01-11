@@ -9,11 +9,11 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     SECRET_KEY: str = "dev-secret-key-change-in-production"
 
-    # JWT
+    # JWT - Keep secret stable to preserve sessions across server restarts
     JWT_SECRET_KEY: str = "jwt-secret-key-change-in-production"
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours (was 15 min)
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30  # 30 days (was 7)
 
     # Datastore
     DATASTORE_TYPE: str = "local"  # "local" or "postgres"

@@ -936,10 +936,17 @@ class MultiplayerGameState:
                 signed_ids.add(d["id"])
 
         team_prestige = self.get_team_prestige(player_id)
+        is_transfer_window = self.phase == GamePhase.TRANSFER_WINDOW
 
         available = []
         for d in self._all_drivers:
             if d["id"] not in signed_ids:
+                # During initial team setup, only show free agents (no team_name)
+                # During transfer window, show all drivers
+                if not is_transfer_window:
+                    if d.get("team_name") and not d.get("is_free_agent", False):
+                        continue  # Skip F1 drivers with teams during initial setup
+
                 driver_copy = d.copy()
                 min_prestige = d.get("min_team_prestige", 0)
 

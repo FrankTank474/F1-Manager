@@ -61,18 +61,19 @@ UPGRADE_COSTS = {
     (75, 79): 14, (80, 84): 18, (85, 89): 24, (90, 94): 32, (95, 99): 45
 }
 
-# AI Team car ratings
+# AI Team car ratings (2026 season)
 AI_TEAM_CARS = {
     "Red Bull Racing": {"downforce": 90, "aero_efficiency": 92, "chassis": 88, "power_unit": 90, "reliability": 85, "tire_cooling": 88},
-    "Mercedes": {"downforce": 85, "aero_efficiency": 88, "chassis": 86, "power_unit": 88, "reliability": 90, "tire_cooling": 85},
+    "McLaren": {"downforce": 91, "aero_efficiency": 90, "chassis": 89, "power_unit": 88, "reliability": 87, "tire_cooling": 88},
     "Ferrari": {"downforce": 88, "aero_efficiency": 85, "chassis": 85, "power_unit": 86, "reliability": 80, "tire_cooling": 82},
-    "McLaren": {"downforce": 86, "aero_efficiency": 87, "chassis": 88, "power_unit": 84, "reliability": 85, "tire_cooling": 86},
+    "Mercedes": {"downforce": 85, "aero_efficiency": 88, "chassis": 86, "power_unit": 88, "reliability": 90, "tire_cooling": 85},
     "Aston Martin": {"downforce": 80, "aero_efficiency": 78, "chassis": 79, "power_unit": 82, "reliability": 82, "tire_cooling": 78},
-    "Alpine": {"downforce": 76, "aero_efficiency": 74, "chassis": 75, "power_unit": 78, "reliability": 78, "tire_cooling": 74},
-    "Williams": {"downforce": 72, "aero_efficiency": 73, "chassis": 71, "power_unit": 75, "reliability": 80, "tire_cooling": 72},
-    "Sauber": {"downforce": 70, "aero_efficiency": 71, "chassis": 72, "power_unit": 73, "reliability": 76, "tire_cooling": 70},
-    "Haas": {"downforce": 68, "aero_efficiency": 69, "chassis": 70, "power_unit": 72, "reliability": 74, "tire_cooling": 68},
-    "RB": {"downforce": 74, "aero_efficiency": 75, "chassis": 74, "power_unit": 76, "reliability": 77, "tire_cooling": 75},
+    "Williams": {"downforce": 76, "aero_efficiency": 77, "chassis": 75, "power_unit": 78, "reliability": 80, "tire_cooling": 76},
+    "Alpine": {"downforce": 74, "aero_efficiency": 74, "chassis": 75, "power_unit": 76, "reliability": 78, "tire_cooling": 74},
+    "Racing Bulls": {"downforce": 74, "aero_efficiency": 75, "chassis": 74, "power_unit": 76, "reliability": 77, "tire_cooling": 75},
+    "Haas": {"downforce": 72, "aero_efficiency": 71, "chassis": 72, "power_unit": 74, "reliability": 76, "tire_cooling": 72},
+    "Audi": {"downforce": 70, "aero_efficiency": 71, "chassis": 72, "power_unit": 73, "reliability": 76, "tire_cooling": 70},
+    "Cadillac": {"downforce": 68, "aero_efficiency": 68, "chassis": 70, "power_unit": 72, "reliability": 74, "tire_cooling": 68},
 }
 
 # Sponsor definitions
@@ -983,7 +984,7 @@ class MultiplayerGameState:
         return min_cost if min_cost != float('inf') else 0
 
     def sign_driver(self, player_id: str, driver_id: str, salary: float, years: int, is_number_one: bool) -> bool:
-        """Sign a driver to a player's team."""
+        """Sign a driver to a player's team (only free agents during initial setup)."""
         if player_id not in self.player_teams:
             return False
 
@@ -997,6 +998,16 @@ class MultiplayerGameState:
 
         driver = next((d for d in self._all_drivers if d["id"] == driver_id), None)
         if not driver:
+            return False
+
+        # During initial team setup, only allow signing free agents (drivers without a team)
+        # Drivers with existing teams can only be signed during transfer window
+        if driver.get("team_name") and not driver.get("is_free_agent", False):
+            # Check if the driver is already on another player's team
+            for pid, pteam in self.player_teams.items():
+                if any(d["id"] == driver_id for d in pteam["drivers"]):
+                    return False  # Already signed by another player
+            # Driver has an AI team - not available during initial setup
             return False
 
         # Check if driver is interested in joining this team

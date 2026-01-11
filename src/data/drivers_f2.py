@@ -128,15 +128,6 @@ F2_DRIVERS = [
         "team_name": None
     },
     {
-        "name": "Arvid Lindblad",
-        "age": 17,
-        "nationality": "British",
-        "stats": {"pace": 76, "overtaking": 75, "defending": 68, "consistency": 66, "tire_management": 68, "wet_skill": 74},
-        "salary": 1,
-        "market_value": 6,
-        "team_name": None
-    },
-    {
         "name": "Luke Browning",
         "age": 23,
         "nationality": "British",
@@ -152,15 +143,6 @@ F2_DRIVERS = [
         "stats": {"pace": 71, "overtaking": 69, "defending": 70, "consistency": 71, "tire_management": 70, "wet_skill": 69},
         "salary": 1,
         "market_value": 3,
-        "team_name": None
-    },
-    {
-        "name": "Franco Colapinto",
-        "age": 22,
-        "nationality": "Argentine",
-        "stats": {"pace": 76, "overtaking": 74, "defending": 73, "consistency": 72, "tire_management": 74, "wet_skill": 73},
-        "salary": 1,
-        "market_value": 6,
         "team_name": None
     },
     {

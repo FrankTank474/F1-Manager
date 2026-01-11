@@ -1144,7 +1144,7 @@ function renderQualifyingQ1(container, state) {
                             ${q1Results.map((result, idx) => {
                                 const isEliminated = result.position >= 16 || result.eliminated_in === 'Q1';
                                 return `
-                                    <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''} ${isEliminated ? 'eliminated-row' : ''}">
+                                    <tr class="${result.player_id === state.your_player_id ? 'player-row your-driver' : ''} ${isEliminated ? 'eliminated-row' : ''}">
                                         <td class="pos-cell">${result.position}</td>
                                         <td>${escapeHtml(result.driver_name)}</td>
                                         <td>${escapeHtml(result.team_name)}</td>
@@ -1215,7 +1215,7 @@ function renderQualifyingQ2(container, state) {
                                 const q2Position = idx + 1;
                                 const isEliminated = q2Position >= 11 || result.eliminated_in === 'Q2';
                                 return `
-                                    <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''} ${isEliminated ? 'eliminated-row' : ''}">
+                                    <tr class="${result.player_id === state.your_player_id ? 'player-row your-driver' : ''} ${isEliminated ? 'eliminated-row' : ''}">
                                         <td class="pos-cell">${q2Position}</td>
                                         <td>${escapeHtml(result.driver_name)}</td>
                                         <td>${escapeHtml(result.team_name)}</td>
@@ -1286,7 +1286,7 @@ function renderQualifyingQ3(container, state) {
                                 const poleTime = q3Results[0]?.q3_time || q3Results[0]?.lap_time;
                                 const gap = idx === 0 ? '-' : calculateTimeGap(poleTime, result.q3_time || result.lap_time);
                                 return `
-                                    <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''} ${idx === 0 ? 'pole-position' : ''}">
+                                    <tr class="${result.player_id === state.your_player_id ? 'player-row your-driver' : ''} ${idx === 0 ? 'pole-position' : ''}">
                                         <td class="pos-cell">${idx === 0 ? '<span class="pole-badge">P</span>' : idx + 1}</td>
                                         <td>${escapeHtml(result.driver_name)}</td>
                                         <td>${escapeHtml(result.team_name)}</td>
@@ -1317,7 +1317,7 @@ function renderQualifyingQ3(container, state) {
                                 const session = result.eliminated_in || 'Q3';
                                 const bestTime = result.q3_time || result.q2_time || result.q1_time || result.lap_time;
                                 return `
-                                    <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''}">
+                                    <tr class="${result.player_id === state.your_player_id ? 'player-row your-driver' : ''}">
                                         <td class="pos-cell">${result.position}</td>
                                         <td>${escapeHtml(result.driver_name)}</td>
                                         <td>${escapeHtml(result.team_name)}</td>
@@ -1482,7 +1482,7 @@ function renderSprintShootoutQ1(container, state) {
                             ${q1Results.map((result, idx) => {
                                 const isEliminated = result.position >= 16 || result.eliminated_in === 'Q1';
                                 return `
-                                    <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''} ${isEliminated ? 'eliminated-row' : ''}">
+                                    <tr class="${result.player_id === state.your_player_id ? 'player-row your-driver' : ''} ${isEliminated ? 'eliminated-row' : ''}">
                                         <td class="pos-cell">${result.position}</td>
                                         <td>${escapeHtml(result.driver_name)}</td>
                                         <td>${escapeHtml(result.team_name)}</td>
@@ -1550,7 +1550,7 @@ function renderSprintShootoutQ2(container, state) {
                                 const q2Position = idx + 1;
                                 const isEliminated = q2Position >= 11 || result.eliminated_in === 'Q2';
                                 return `
-                                    <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''} ${isEliminated ? 'eliminated-row' : ''}">
+                                    <tr class="${result.player_id === state.your_player_id ? 'player-row your-driver' : ''} ${isEliminated ? 'eliminated-row' : ''}">
                                         <td class="pos-cell">${q2Position}</td>
                                         <td>${escapeHtml(result.driver_name)}</td>
                                         <td>${escapeHtml(result.team_name)}</td>
@@ -1619,7 +1619,7 @@ function renderSprintShootoutQ3(container, state) {
                                 const poleTime = q3Results[0]?.q3_time || q3Results[0]?.lap_time;
                                 const gap = idx === 0 ? '-' : calculateTimeGap(poleTime, result.q3_time || result.lap_time);
                                 return `
-                                    <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''} ${idx === 0 ? 'pole-position' : ''}">
+                                    <tr class="${result.player_id === state.your_player_id ? 'player-row your-driver' : ''} ${idx === 0 ? 'pole-position' : ''}">
                                         <td class="pos-cell">${idx === 0 ? '<span class="pole-badge">P</span>' : idx + 1}</td>
                                         <td>${escapeHtml(result.driver_name)}</td>
                                         <td>${escapeHtml(result.team_name)}</td>
@@ -1691,7 +1691,7 @@ function renderSprintGrid(container, state) {
                             ${state.qualifying_results?.map(result => {
                                 const session = result.eliminated_in ? `SQ${result.eliminated_in.charAt(1)}` : 'SQ3';
                                 return `
-                                    <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''}">
+                                    <tr class="${result.player_id === state.your_player_id ? 'player-row your-driver' : ''}">
                                         <td class="pos-cell">${result.position}</td>
                                         <td>${escapeHtml(result.driver_name)}</td>
                                         <td>${escapeHtml(result.team_name)}</td>
@@ -1850,7 +1850,7 @@ function renderSprintRace(container, state) {
  */
 function renderSprintRacePositions(positions, yourPlayerId) {
     return positions.map(p => `
-        <tr class="${p.is_player_driver ? 'player-row' : ''} ${p.player_id === yourPlayerId ? 'your-driver' : ''} ${p.status === 'dnf' ? 'dnf-row' : ''}">
+        <tr class="${p.player_id === yourPlayerId ? 'player-row your-driver' : ''} ${p.status === 'dnf' ? 'dnf-row' : ''}">
             <td class="pos-cell">${p.status === 'dnf' ? 'DNF' : p.position}</td>
             <td>${escapeHtml(p.driver_name)}</td>
             <td class="team-cell">${escapeHtml(p.team_name || '')}</td>
@@ -1957,7 +1957,7 @@ function renderSprintResults(container, state) {
                         </thead>
                         <tbody>
                             ${state.race_state?.positions?.map(p => `
-                                <tr class="${p.is_player_driver ? 'player-row' : ''} ${p.player_id === state.your_player_id ? 'your-driver' : ''} ${p.status === 'dnf' ? 'dnf-row' : ''}">
+                                <tr class="${p.player_id === state.your_player_id ? 'player-row your-driver' : ''} ${p.status === 'dnf' ? 'dnf-row' : ''}">
                                     <td class="pos-cell">${p.status === 'dnf' ? 'DNF' : p.position}</td>
                                     <td>${escapeHtml(p.driver_name)}</td>
                                     <td>${escapeHtml(p.team_name)}</td>
@@ -2544,7 +2544,7 @@ async function simulateFullRace(container, gameId) {
 
 function renderRacePositions(positions, yourPlayerId) {
     return positions.map(p => `
-        <tr class="${p.is_player_driver ? 'player-row' : ''} ${p.player_id === yourPlayerId ? 'your-driver' : ''} ${p.status === 'dnf' ? 'dnf-row' : ''}">
+        <tr class="${p.player_id === yourPlayerId ? 'player-row your-driver' : ''} ${p.status === 'dnf' ? 'dnf-row' : ''}">
             <td class="pos-cell">${p.status === 'dnf' ? 'DNF' : p.position}</td>
             <td>${escapeHtml(p.driver_name)}</td>
             <td class="team-cell">${escapeHtml(p.team_name || '')}</td>
@@ -2617,7 +2617,7 @@ function renderRaceResults(container, state) {
                         </thead>
                         <tbody>
                             ${state.race_state?.positions?.map(p => `
-                                <tr class="${p.is_player_driver ? 'player-row' : ''} ${p.player_id === state.your_player_id ? 'your-driver' : ''} ${p.status === 'dnf' ? 'dnf-row' : ''}">
+                                <tr class="${p.player_id === state.your_player_id ? 'player-row your-driver' : ''} ${p.status === 'dnf' ? 'dnf-row' : ''}">
                                     <td class="pos-cell">${p.status === 'dnf' ? 'DNF' : p.position}</td>
                                     <td>${escapeHtml(p.driver_name)}</td>
                                     <td>${escapeHtml(p.team_name)}</td>
@@ -2873,7 +2873,7 @@ function renderStandingsScreen(container, state) {
                             </thead>
                             <tbody>
                                 ${state.driver_standings?.map(s => `
-                                    <tr class="${s.is_player_driver ? 'player-row' : ''} ${s.player_id === state.your_player_id ? 'your-driver' : ''}">
+                                    <tr class="${s.player_id === state.your_player_id ? 'player-row your-driver' : ''}">
                                         <td class="pos-cell">${s.position}</td>
                                         <td>${escapeHtml(s.driver_name)}</td>
                                         <td>${escapeHtml(s.team_name)}</td>
@@ -2899,7 +2899,7 @@ function renderStandingsScreen(container, state) {
                             </thead>
                             <tbody>
                                 ${state.constructor_standings?.map(s => `
-                                    <tr class="${s.is_player_team ? 'player-row' : ''} ${s.player_id === state.your_player_id ? 'your-driver' : ''}">
+                                    <tr class="${s.player_id === state.your_player_id ? 'player-row your-driver' : ''}">
                                         <td class="pos-cell">${s.position}</td>
                                         <td>${escapeHtml(s.team_name)}</td>
                                         <td>${s.wins}</td>

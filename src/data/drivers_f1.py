@@ -1,4 +1,4 @@
-"""2026 F1 Grid Driver Data"""
+"""2026 F1 Grid Driver Data - Updated for 2026 season"""
 
 F1_DRIVERS = [
     # Red Bull Racing
@@ -12,11 +12,11 @@ F1_DRIVERS = [
         "team_name": "Red Bull Racing"
     },
     {
-        "name": "Liam Lawson",
-        "age": 24,
-        "nationality": "New Zealand",
-        "stats": {"pace": 81, "overtaking": 78, "defending": 77, "consistency": 75, "tire_management": 76, "wet_skill": 79},
-        "salary": 8,
+        "name": "Isack Hadjar",
+        "age": 22,
+        "nationality": "French",
+        "stats": {"pace": 82, "overtaking": 79, "defending": 76, "consistency": 74, "tire_management": 75, "wet_skill": 77},
+        "salary": 3,
         "market_value": 15,
         "team_name": "Red Bull Racing"
     },
@@ -69,7 +69,7 @@ F1_DRIVERS = [
         "team_name": "Mercedes"
     },
     {
-        "name": "Andrea Kimi Antonelli",
+        "name": "Kimi Antonelli",
         "age": 19,
         "nationality": "Italian",
         "stats": {"pace": 85, "overtaking": 80, "defending": 75, "consistency": 70, "tire_management": 72, "wet_skill": 78},
@@ -107,12 +107,12 @@ F1_DRIVERS = [
         "team_name": "Alpine"
     },
     {
-        "name": "Jack Doohan",
-        "age": 23,
-        "nationality": "Australian",
-        "stats": {"pace": 76, "overtaking": 72, "defending": 70, "consistency": 68, "tire_management": 70, "wet_skill": 72},
+        "name": "Franco Colapinto",
+        "age": 22,
+        "nationality": "Argentine",
+        "stats": {"pace": 78, "overtaking": 75, "defending": 72, "consistency": 71, "tire_management": 74, "wet_skill": 73},
         "salary": 3,
-        "market_value": 8,
+        "market_value": 12,
         "team_name": "Alpine"
     },
     # Williams
@@ -134,24 +134,24 @@ F1_DRIVERS = [
         "market_value": 25,
         "team_name": "Williams"
     },
-    # RB (Visa Cash App RB)
+    # Racing Bulls (formerly RB/AlphaTauri)
     {
-        "name": "Yuki Tsunoda",
-        "age": 26,
-        "nationality": "Japanese",
-        "stats": {"pace": 82, "overtaking": 78, "defending": 76, "consistency": 72, "tire_management": 74, "wet_skill": 75},
+        "name": "Liam Lawson",
+        "age": 24,
+        "nationality": "New Zealand",
+        "stats": {"pace": 81, "overtaking": 78, "defending": 77, "consistency": 75, "tire_management": 76, "wet_skill": 79},
         "salary": 5,
-        "market_value": 18,
-        "team_name": "RB"
+        "market_value": 15,
+        "team_name": "Racing Bulls"
     },
     {
-        "name": "Isack Hadjar",
-        "age": 21,
-        "nationality": "French",
-        "stats": {"pace": 79, "overtaking": 76, "defending": 73, "consistency": 71, "tire_management": 72, "wet_skill": 74},
-        "salary": 2,
-        "market_value": 10,
-        "team_name": "RB"
+        "name": "Arvid Lindblad",
+        "age": 18,
+        "nationality": "British",
+        "stats": {"pace": 76, "overtaking": 73, "defending": 70, "consistency": 68, "tire_management": 69, "wet_skill": 72},
+        "salary": 1,
+        "market_value": 8,
+        "team_name": "Racing Bulls"
     },
     # Haas
     {
@@ -172,7 +172,7 @@ F1_DRIVERS = [
         "market_value": 10,
         "team_name": "Haas"
     },
-    # Sauber (Audi from 2026)
+    # Audi (formerly Sauber)
     {
         "name": "Nico Hulkenberg",
         "age": 38,
@@ -180,7 +180,7 @@ F1_DRIVERS = [
         "stats": {"pace": 80, "overtaking": 76, "defending": 82, "consistency": 84, "tire_management": 82, "wet_skill": 78},
         "salary": 8,
         "market_value": 12,
-        "team_name": "Sauber"
+        "team_name": "Audi"
     },
     {
         "name": "Gabriel Bortoleto",
@@ -189,6 +189,25 @@ F1_DRIVERS = [
         "stats": {"pace": 77, "overtaking": 74, "defending": 71, "consistency": 72, "tire_management": 73, "wet_skill": 70},
         "salary": 2,
         "market_value": 9,
-        "team_name": "Sauber"
+        "team_name": "Audi"
+    },
+    # Cadillac (NEW for 2026 - GM/Andretti)
+    {
+        "name": "Sergio Perez",
+        "age": 36,
+        "nationality": "Mexican",
+        "stats": {"pace": 82, "overtaking": 78, "defending": 84, "consistency": 76, "tire_management": 88, "wet_skill": 80},
+        "salary": 12,
+        "market_value": 18,
+        "team_name": "Cadillac"
+    },
+    {
+        "name": "Valtteri Bottas",
+        "age": 36,
+        "nationality": "Finnish",
+        "stats": {"pace": 83, "overtaking": 75, "defending": 82, "consistency": 85, "tire_management": 84, "wet_skill": 80},
+        "salary": 8,
+        "market_value": 15,
+        "team_name": "Cadillac"
     },
 ]

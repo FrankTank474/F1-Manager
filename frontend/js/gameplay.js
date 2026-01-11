@@ -797,6 +797,10 @@ function renderMainMenu(container, state) {
                                 <span class="nav-icon">👥</span>
                                 <span class="nav-label">Team Info</span>
                             </button>
+                            <button class="hub-nav-btn" id="rivals-btn">
+                                <span class="nav-icon">🏎️</span>
+                                <span class="nav-label">Other Teams</span>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -833,6 +837,7 @@ function renderMainMenu(container, state) {
     document.getElementById('upgrades-btn')?.addEventListener('click', () => renderUpgradesScreen(container, state));
     document.getElementById('standings-btn')?.addEventListener('click', () => renderStandingsScreen(container, state));
     document.getElementById('calendar-btn')?.addEventListener('click', () => renderCalendarScreen(container, state));
+    document.getElementById('rivals-btn')?.addEventListener('click', () => renderOtherTeamsScreen(container, state));
 
     // Auto-refresh in multiplayer when ready (to detect when other player advances phase)
     if (isMultiplayer && imReady) {
@@ -2585,6 +2590,7 @@ function renderRaceResults(container, state) {
                                 <th>Pos</th>
                                 <th>Driver</th>
                                 <th>Team</th>
+                                <th>Gap</th>
                                 <th>Points</th>
                             </tr>
                         </thead>
@@ -2594,12 +2600,28 @@ function renderRaceResults(container, state) {
                                     <td class="pos-cell">${p.status === 'dnf' ? 'DNF' : p.position}</td>
                                     <td>${escapeHtml(p.driver_name)}</td>
                                     <td>${escapeHtml(p.team_name)}</td>
+                                    <td class="gap-cell">${p.position === 1 ? 'Leader' : p.status === 'dnf' ? '-' : p.gap}</td>
                                     <td>${p.status === 'dnf' ? '0' : getPointsForPosition(p.position)}</td>
                                 </tr>
-                            `).join('') || '<tr><td colspan="4">No results</td></tr>'}
+                            `).join('') || '<tr><td colspan="5">No results</td></tr>'}
                         </tbody>
                     </table>
                 </div>
+
+                ${state.news_headlines && state.news_headlines.length > 0 ? `
+                    <div class="card news-headlines-card mt-lg">
+                        <h3>Race Headlines</h3>
+                        <div class="news-headlines">
+                            ${state.news_headlines.slice(0, 5).map(nh => `
+                                <div class="news-item ${nh.is_about_player ? 'about-player' : ''} category-${nh.category}">
+                                    <div class="news-category">${formatNewsCategory(nh.category)}</div>
+                                    <div class="news-headline">${escapeHtml(nh.headline)}</div>
+                                    <div class="news-body">${escapeHtml(nh.body)}</div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
 
                 ${isMultiplayer ? `
                     <div class="sync-status mt-xl">
@@ -2717,8 +2739,26 @@ function renderTeamScreen(container, state) {
                 <div class="drivers-grid mt-md">
                     ${team?.drivers?.map(driver => `
                         <div class="card driver-detail-card">
-                            <h4>${escapeHtml(driver.name)}</h4>
+                            <div class="driver-header-row">
+                                <h4>${escapeHtml(driver.name)}</h4>
+                                ${driver.form?.level && driver.form.level !== 'normal' ? `
+                                    <span class="driver-form-badge form-${driver.form.level}">${formatFormLevel(driver.form.level)}</span>
+                                ` : ''}
+                            </div>
                             <p class="text-secondary">${driver.age} years old - ${escapeHtml(driver.nationality)}</p>
+
+                            ${driver.traits?.length > 0 ? `
+                                <div class="driver-traits">
+                                    ${driver.traits.map(trait => `<span class="trait-badge trait-${trait}">${formatTraitName(trait)}</span>`).join('')}
+                                </div>
+                            ` : ''}
+
+                            ${driver.injury?.injury_type && driver.injury.injury_type !== 'none' ? `
+                                <div class="injury-detail mt-sm">
+                                    <span class="injury-badge injury-${driver.injury.injury_type}">${driver.injury.description}</span>
+                                    <p class="races-remaining">Out for ${driver.injury.races_remaining} more race(s)</p>
+                                </div>
+                            ` : ''}
 
                             <div class="driver-morale mt-md">
                                 <span>Morale: </span>
@@ -2742,6 +2782,21 @@ function renderTeamScreen(container, state) {
                                 <span class="mini-stat">Wins: ${driver.race_wins || 0}</span>
                                 <span class="mini-stat">Podiums: ${driver.podiums || 0}</span>
                             </div>
+
+                            ${driver.relationships?.length > 0 ? `
+                                <div class="driver-relationships">
+                                    <h5>Relationships</h5>
+                                    <div class="relationship-list">
+                                        ${driver.relationships.slice(0, 3).map(rel => `
+                                            <div class="relationship-item">
+                                                <span class="relationship-type type-${rel.relationship_type}">${formatRelationshipType(rel.relationship_type)}</span>
+                                                <span class="relationship-name">${escapeHtml(rel.other_driver_name)}</span>
+                                                ${rel.reason ? `<span class="relationship-reason">${escapeHtml(rel.reason)}</span>` : ''}
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            ` : ''}
 
                             ${driver.contract ? `
                                 <div class="driver-contract mt-md">
@@ -3182,6 +3237,64 @@ function getOrdinalSuffix(n) {
     return s[(v - 20) % 10] || s[v] || s[0];
 }
 
+function formatNewsCategory(category) {
+    const categories = {
+        'race_result': 'RACE',
+        'driver_performance': 'DRIVER',
+        'team_news': 'TEAM',
+        'contract': 'CONTRACT',
+        'injury': 'INJURY',
+        'rivalry': 'RIVALRY',
+        'achievement': 'ACHIEVEMENT',
+        'controversy': 'DRAMA'
+    };
+    return categories[category] || category.toUpperCase();
+}
+
+function formatFormLevel(level) {
+    const levels = {
+        'hot_streak': 'On Fire',
+        'good_form': 'Good Form',
+        'normal': 'Normal',
+        'poor_form': 'Poor Form',
+        'slump': 'Struggling'
+    };
+    return levels[level] || level;
+}
+
+function getFormClass(level) {
+    const classes = {
+        'hot_streak': 'form-hot',
+        'good_form': 'form-good',
+        'normal': 'form-normal',
+        'poor_form': 'form-poor',
+        'slump': 'form-slump'
+    };
+    return classes[level] || '';
+}
+
+function formatTraitName(trait) {
+    const traits = {
+        'aggressive': 'Aggressive',
+        'consistent': 'Consistent',
+        'wet_weather_specialist': 'Wet Specialist',
+        'tire_whisperer': 'Tire Whisperer',
+        'qualifying_king': 'Quali King'
+    };
+    return traits[trait] || trait;
+}
+
+function formatRelationshipType(type) {
+    const types = {
+        'rivalry': 'Rival',
+        'friendship': 'Friend',
+        'neutral': 'Neutral',
+        'respect': 'Respect',
+        'animosity': 'Bad Blood'
+    };
+    return types[type] || type;
+}
+
 function renderCarStat(name, value) {
     return `
         <div class="car-stat">
@@ -3227,6 +3340,116 @@ function getTireWearLevel(degradation) {
     if (degradation >= 1.2) return 'High';
     if (degradation >= 0.9) return 'Medium';
     return 'Low';
+}
+
+/**
+ * Other Teams Screen - View rival teams' car ratings, drivers, and upgrade history
+ */
+function renderOtherTeamsScreen(container, state) {
+    const rivalTeams = state.rival_teams || [];
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <button class="btn btn-secondary" id="back-btn">Back</button>
+                <h1>Other Teams</h1>
+            </div>
+
+            <div class="game-content">
+                <p class="text-secondary mb-lg">View rival teams' car development and performance throughout the season.</p>
+
+                <div class="rival-teams-grid">
+                    ${rivalTeams.length > 0 ? rivalTeams.map(team => `
+                        <div class="card rival-team-card">
+                            <div class="rival-team-header">
+                                <div>
+                                    <h3 class="rival-team-name">${escapeHtml(team.name)}</h3>
+                                    <span class="constructor-position">P${team.constructor_position}</span>
+                                </div>
+                                <div class="rival-overall-badge">${team.car_overall}</div>
+                            </div>
+
+                            <div class="rival-team-stats">
+                                <span class="rival-stat">
+                                    <span class="stat-icon">🏆</span>
+                                    <span class="stat-text">${team.race_wins} wins</span>
+                                </span>
+                                <span class="rival-stat">
+                                    <span class="stat-icon">📊</span>
+                                    <span class="stat-text">${team.season_points} pts</span>
+                                </span>
+                            </div>
+
+                            <div class="rival-drivers">
+                                <h4>Drivers</h4>
+                                <div class="driver-list">
+                                    ${team.drivers?.map(d => `<span class="driver-name-tag">${escapeHtml(d)}</span>`).join('') || '<span class="text-muted">No drivers</span>'}
+                                </div>
+                            </div>
+
+                            <div class="rival-car-stats">
+                                <h4>Car Stats</h4>
+                                ${renderRivalCarStat('Downforce', team.car_stats?.downforce)}
+                                ${renderRivalCarStat('Aero Eff.', team.car_stats?.aero_efficiency)}
+                                ${renderRivalCarStat('Chassis', team.car_stats?.chassis)}
+                                ${renderRivalCarStat('Power Unit', team.car_stats?.power_unit)}
+                                ${renderRivalCarStat('Reliability', team.car_stats?.reliability)}
+                                ${renderRivalCarStat('Tire Cool.', team.car_stats?.tire_cooling)}
+                            </div>
+
+                            ${team.recent_upgrades?.length > 0 ? `
+                                <div class="rival-upgrades">
+                                    <h4>Recent Upgrades</h4>
+                                    <div class="upgrade-list">
+                                        ${team.recent_upgrades.slice(0, 3).map(upgrade => `
+                                            <div class="upgrade-item">
+                                                <span class="upgrade-race">R${upgrade.race_number}</span>
+                                                <span class="upgrade-stat">${formatStatName(upgrade.stat_name)}</span>
+                                                <span class="upgrade-change">+${upgrade.new_value - upgrade.old_value}</span>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            ` : `
+                                <div class="rival-upgrades">
+                                    <h4>Recent Upgrades</h4>
+                                    <p class="text-muted no-upgrades">No upgrades yet</p>
+                                </div>
+                            `}
+                        </div>
+                    `).join('') : '<p class="text-muted">No rival teams data available.</p>'}
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('back-btn')?.addEventListener('click', () => {
+        renderMainMenu(container, state);
+    });
+}
+
+function renderRivalCarStat(name, value) {
+    return `
+        <div class="rival-car-stat">
+            <span class="rival-stat-name">${name}</span>
+            <div class="rival-stat-bar">
+                <div class="rival-stat-fill" style="width: ${value || 0}%"></div>
+            </div>
+            <span class="rival-stat-value">${value || 0}</span>
+        </div>
+    `;
+}
+
+function formatStatName(statName) {
+    const names = {
+        'downforce': 'Downforce',
+        'aero_efficiency': 'Aero',
+        'chassis': 'Chassis',
+        'power_unit': 'Power',
+        'reliability': 'Reliability',
+        'tire_cooling': 'Tires'
+    };
+    return names[statName] || statName;
 }
 
 export { GamePhase, renderGameScreen };

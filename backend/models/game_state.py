@@ -74,6 +74,54 @@ class ContractStatus(str, Enum):
     EXPIRED = "expired"
 
 
+class DriverTrait(str, Enum):
+    """Driver personality traits that affect performance."""
+    AGGRESSIVE = "aggressive"  # More overtakes but more incidents
+    CONSISTENT = "consistent"  # Fewer mistakes, steady pace
+    WET_WEATHER_SPECIALIST = "wet_weather_specialist"  # Bonus in rain
+    TIRE_WHISPERER = "tire_whisperer"  # Better tire management
+    QUALIFYING_KING = "qualifying_king"  # Better in one-lap pace
+
+
+class RelationshipType(str, Enum):
+    """Types of driver relationships."""
+    RIVALRY = "rivalry"  # Intense on-track battles
+    FRIENDSHIP = "friendship"  # Easier to sign if friend is on team
+    NEUTRAL = "neutral"  # No special relationship
+    RESPECT = "respect"  # Professional respect
+    ANIMOSITY = "animosity"  # Past incidents, bad blood
+
+
+class InjuryType(str, Enum):
+    """Types of driver injuries."""
+    NONE = "none"
+    MINOR = "minor"  # Races with reduced performance
+    MODERATE = "moderate"  # Misses 1-2 races
+    SEVERE = "severe"  # Misses 3-5 races
+    CAREER_THREATENING = "career_threatening"  # Season-ending
+
+
+class FormLevel(str, Enum):
+    """Driver form levels."""
+    HOT_STREAK = "hot_streak"  # +5% performance
+    GOOD_FORM = "good_form"  # +2% performance
+    NORMAL = "normal"  # No modifier
+    POOR_FORM = "poor_form"  # -2% performance
+    SLUMP = "slump"  # -5% performance
+
+
+class NewsCategory(str, Enum):
+    """News headline categories."""
+    RACE_RESULT = "race_result"
+    DRIVER_PERFORMANCE = "driver_performance"
+    TEAM_NEWS = "team_news"
+    CONTRACT = "contract"
+    INJURY = "injury"
+    RIVALRY = "rivalry"
+    ACHIEVEMENT = "achievement"
+    CONTROVERSY = "controversy"
+
+
 # ==================== DRIVER MODELS ====================
 
 class DriverStats(BaseModel):
@@ -117,6 +165,33 @@ class DriverContract(BaseModel):
     negotiation_deadline: Optional[int] = None  # Race number deadline
 
 
+class DriverRelationship(BaseModel):
+    """Relationship between two drivers."""
+    other_driver_id: str
+    other_driver_name: str
+    relationship_type: str  # rivalry, friendship, neutral, respect, animosity
+    intensity: int = 50  # 0-100, higher = more intense
+    reason: str = ""  # Why this relationship exists
+    past_incidents: int = 0  # Number of on-track incidents
+
+
+class DriverInjury(BaseModel):
+    """Driver injury information."""
+    injury_type: str = "none"
+    description: str = ""
+    races_remaining: int = 0  # Races until fully healed
+    performance_penalty: int = 0  # 0-30% reduction while injured
+    caused_by: Optional[str] = None  # Driver who caused it (if any)
+
+
+class DriverForm(BaseModel):
+    """Driver current form/confidence."""
+    level: str = "normal"  # hot_streak, good_form, normal, poor_form, slump
+    races_in_form: int = 0  # How long they've been in this form
+    recent_results: List[int] = []  # Last 5 race positions
+    media_pressure: int = 0  # 0-100, higher = more pressure after poor results
+
+
 class DriverInfo(BaseModel):
     """Driver information."""
     id: str
@@ -156,6 +231,22 @@ class DriverInfo(BaseModel):
     # Is this a player's driver?
     is_player_driver: bool = False
     player_id: Optional[str] = None  # Which player owns this driver
+
+    # Driver Traits (1-2 traits per driver)
+    traits: List[str] = []  # aggressive, consistent, wet_weather_specialist, tire_whisperer, qualifying_king
+
+    # Relationships with other drivers
+    relationships: List[DriverRelationship] = []
+
+    # Injury status
+    injury: Optional[DriverInjury] = None
+
+    # Current form
+    form: Optional[DriverForm] = None
+
+    # Reserve driver flag
+    is_reserve: bool = False
+    replacing_driver_id: Optional[str] = None  # If reserve, who they're replacing
 
 
 class MarketDriver(BaseModel):
@@ -392,11 +483,47 @@ class RaceResult(BaseModel):
     driver_name: str
     team_name: str
     total_time: str
+    gap_to_leader: str = ""  # Gap to P1, e.g., "+5.234s" or "+1 Lap"
     points: int
     fastest_lap: bool = False
     is_player_driver: bool = False
     player_id: Optional[str] = None
     status: str = "finished"
+
+
+class NewsHeadline(BaseModel):
+    """A news headline after a race."""
+    id: str
+    category: str  # race_result, driver_performance, team_news, contract, injury, rivalry, achievement, controversy
+    headline: str
+    body: str
+    race_number: int
+    driver_name: Optional[str] = None
+    team_name: Optional[str] = None
+    is_about_player: bool = False
+    player_id: Optional[str] = None
+    timestamp: datetime = datetime.now()
+
+
+class TeamUpgradeHistory(BaseModel):
+    """Record of a team's car upgrade."""
+    race_number: int
+    stat_name: str
+    old_value: int
+    new_value: int
+    description: str
+
+
+class RivalTeamInfo(BaseModel):
+    """Information about a rival/AI team for viewing."""
+    name: str
+    car_overall: int
+    car_stats: CarStats
+    drivers: List[str] = []  # Driver names
+    season_points: int = 0
+    race_wins: int = 0
+    recent_upgrades: List[TeamUpgradeHistory] = []
+    constructor_position: int = 0
 
 
 class SeasonCalendarEntry(BaseModel):
@@ -507,6 +634,12 @@ class GameStateResponse(BaseModel):
 
     # All teams (for viewing rivals)
     all_teams: Optional[List[TeamInfo]] = None
+
+    # Rival teams info (for Other Teams menu)
+    rival_teams: Optional[List[RivalTeamInfo]] = None
+
+    # News headlines from this race
+    news_headlines: Optional[List[NewsHeadline]] = None
 
     # Messages/notifications
     notifications: List[str] = []

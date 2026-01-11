@@ -13,7 +13,8 @@ from ..models.game_state import (
     CarStats, UpgradeOption, DevelopmentNode, DevelopmentTree, SponsorObjective, SponsorInfo,
     TeamInfo, InboxMessage, TrackInfo, QualifyingResult, RaceEntry, RaceEvent, RaceState,
     RaceResult, SeasonCalendarEntry, DriverStanding, ConstructorStanding, PlayerState, TurnInfo,
-    PitDecisionStatus
+    PitDecisionStatus, DriverTrait, RelationshipType, InjuryType, FormLevel, NewsCategory,
+    DriverRelationship, DriverInjury, DriverForm, NewsHeadline, TeamUpgradeHistory, RivalTeamInfo
 )
 
 # Add src/data to path to import driver/track data
@@ -95,6 +96,115 @@ SPONSORS = {
         {"name": "MegaCorp International", "payment": 2.2, "bonus": 28, "objective_type": "podium", "target": 3},
         {"name": "Elite Brands", "payment": 2.6, "bonus": 32, "objective_type": "win", "target": 1},
         {"name": "WorldWide Tech", "payment": 3.0, "bonus": 40, "objective_type": "finish_position", "target": 5},
+    ],
+}
+
+
+# Driver traits and their effects
+DRIVER_TRAITS = {
+    "aggressive": {
+        "name": "Aggressive",
+        "overtaking_bonus": 0.15,
+        "incident_risk": 0.10,
+        "description": "More overtakes but higher incident risk"
+    },
+    "consistent": {
+        "name": "Consistent",
+        "consistency_bonus": 0.10,
+        "incident_reduction": 0.05,
+        "description": "Fewer mistakes, steady pace"
+    },
+    "wet_weather_specialist": {
+        "name": "Wet Weather Specialist",
+        "wet_bonus": 0.20,
+        "description": "Exceptional performance in rain"
+    },
+    "tire_whisperer": {
+        "name": "Tire Whisperer",
+        "tire_wear_reduction": 0.15,
+        "description": "Better tire management"
+    },
+    "qualifying_king": {
+        "name": "Qualifying King",
+        "qualifying_bonus": 0.10,
+        "description": "Better one-lap pace"
+    },
+}
+
+# Predefined driver rivalries (real-world inspired)
+DRIVER_RIVALRIES = [
+    ("Max Verstappen", "Lewis Hamilton", "rivalry", 90, "Championship battles"),
+    ("Max Verstappen", "Charles Leclerc", "rivalry", 75, "Title rivals"),
+    ("Lewis Hamilton", "George Russell", "respect", 60, "Teammates at Mercedes"),
+    ("Charles Leclerc", "Carlos Sainz", "friendship", 50, "Former teammates"),
+    ("Lando Norris", "Oscar Piastri", "friendship", 65, "McLaren teammates"),
+    ("Fernando Alonso", "Lewis Hamilton", "rivalry", 85, "2007 McLaren fallout"),
+    ("Sebastian Vettel", "Charles Leclerc", "rivalry", 70, "Ferrari tension"),
+    ("Daniel Ricciardo", "Max Verstappen", "friendship", 55, "Former teammates"),
+]
+
+# Form level effects
+FORM_EFFECTS = {
+    "hot_streak": 0.05,  # +5% performance
+    "good_form": 0.02,   # +2% performance
+    "normal": 0.0,       # No modifier
+    "poor_form": -0.02,  # -2% performance
+    "slump": -0.05,      # -5% performance
+}
+
+# Injury probabilities after incidents
+INJURY_CHANCES = {
+    "minor_incident": 0.05,  # 5% chance of injury
+    "major_incident": 0.25,  # 25% chance of injury
+    "crash": 0.40,           # 40% chance of injury
+}
+
+# News headline templates
+NEWS_TEMPLATES = {
+    "race_win": [
+        "{driver} DOMINATES at {track}!",
+        "{driver} claims victory at {track}",
+        "UNSTOPPABLE: {driver} wins {track} Grand Prix",
+        "{team} celebrate as {driver} takes the win",
+    ],
+    "podium": [
+        "{driver} secures podium at {track}",
+        "Strong showing: {driver} finishes P{position}",
+        "{team} delighted with {driver}'s podium finish",
+    ],
+    "points_finish": [
+        "{driver} bags valuable points at {track}",
+        "Solid drive from {driver} - P{position}",
+        "{team} pick up points with {driver}",
+    ],
+    "dnf": [
+        "DISASTER: {driver} retires from {track}",
+        "Heartbreak for {driver} at {track}",
+        "{driver}'s {track} ends in tears",
+    ],
+    "hot_streak": [
+        "{driver} ON FIRE with {streak} race hot streak!",
+        "Can anyone stop {driver}? {streak} great results in a row!",
+    ],
+    "slump": [
+        "Pressure mounting on {driver} after poor run",
+        "{driver} struggling for form - fans worried",
+        "What's gone wrong for {driver}?",
+    ],
+    "rivalry_incident": [
+        "DRAMA: {driver1} and {driver2} clash at {track}!",
+        "Rivalry heats up: {driver1} vs {driver2}",
+        "Stewards investigate {driver1}-{driver2} incident",
+    ],
+    "injury": [
+        "INJURY: {driver} set to miss races",
+        "{driver} ruled out after {track} incident",
+        "Reserve driver called up as {driver} recovers",
+    ],
+    "team_upgrade": [
+        "{team} unveil car upgrades at {track}",
+        "New aero package for {team}",
+        "{team} development push pays off",
     ],
 }
 
@@ -353,6 +463,21 @@ class MultiplayerGameState:
         self.game_stopped = False
         self.stopped_by: Optional[str] = None  # Username who stopped
 
+        # News headlines - generated after each race
+        self.news_headlines: List[Dict] = []
+
+        # AI team upgrade history - team_name -> list of upgrades
+        self.ai_team_upgrades: Dict[str, List[Dict]] = {}
+        for team_name in AI_TEAM_CARS:
+            self.ai_team_upgrades[team_name] = []
+
+        # Reserve drivers pool
+        self.reserve_drivers: List[Dict] = []
+        self._setup_reserve_drivers()
+
+        # Race time tracking for gap calculation
+        self.race_times: Dict[str, float] = {}  # driver_name -> total race time in seconds
+
     def stop_game(self, player_id: str) -> bool:
         """Stop the game and notify all players."""
         if player_id not in self.players:
@@ -372,6 +497,9 @@ class MultiplayerGameState:
                 # Top drivers (85+) want top teams, mid drivers (70-84) want midfield+
                 # Lower drivers (below 70) will consider any team
                 min_prestige = self._calculate_driver_min_prestige(overall, d["age"])
+
+                # Assign 1-2 traits based on stats
+                traits = self._assign_driver_traits(stats, d["name"])
 
                 driver = {
                     "id": str(i),
@@ -393,10 +521,20 @@ class MultiplayerGameState:
                     "contract_years": 2 if d.get("team_name") else 0,
                     "is_number_one": False,
                     "player_id": None,
-                    "min_team_prestige": min_prestige,  # Minimum team prestige to sign
+                    "min_team_prestige": min_prestige,
                     "career_races": random.randint(0, 200) if overall > 75 else random.randint(0, 50),
+                    # New fields
+                    "traits": traits,
+                    "relationships": [],  # Will be populated after all drivers are loaded
+                    "injury": {"injury_type": "none", "description": "", "races_remaining": 0, "performance_penalty": 0},
+                    "form": {"level": "normal", "races_in_form": 0, "recent_results": [], "media_pressure": 0},
+                    "is_reserve": False,
+                    "replacing_driver_id": None,
                 }
                 self._all_drivers.append(driver)
+
+        # Set up relationships after all drivers are loaded
+        self._setup_driver_relationships()
 
     def _calculate_driver_min_prestige(self, overall: int, age: int) -> int:
         """Calculate minimum team prestige a driver requires based on their quality."""
@@ -428,6 +566,134 @@ class MultiplayerGameState:
             base -= 10  # Veterans may accept less
 
         return max(0, min(95, base))
+
+    def _assign_driver_traits(self, stats: Dict, name: str) -> List[str]:
+        """Assign 1-2 traits to a driver based on their stats."""
+        traits = []
+        trait_scores = {}
+
+        # Calculate affinity for each trait based on stats
+        trait_scores["aggressive"] = stats.get("overtaking", 70) * 0.5 + (100 - stats.get("consistency", 70)) * 0.5
+        trait_scores["consistent"] = stats.get("consistency", 70)
+        trait_scores["wet_weather_specialist"] = stats.get("wet_skill", 70)
+        trait_scores["tire_whisperer"] = stats.get("tire_management", 70)
+        trait_scores["qualifying_king"] = stats.get("pace", 70) * 0.7 + stats.get("consistency", 70) * 0.3
+
+        # Sort by score and pick top 1-2
+        sorted_traits = sorted(trait_scores.items(), key=lambda x: x[1], reverse=True)
+
+        # Always assign primary trait if score is high enough
+        if sorted_traits[0][1] >= 80:
+            traits.append(sorted_traits[0][0])
+
+        # 50% chance of second trait if score is also high
+        if len(sorted_traits) > 1 and sorted_traits[1][1] >= 75 and random.random() < 0.5:
+            traits.append(sorted_traits[1][0])
+
+        # Fallback - assign at least one trait randomly if none assigned
+        if not traits:
+            traits.append(random.choice(list(DRIVER_TRAITS.keys())))
+
+        return traits
+
+    def _setup_driver_relationships(self):
+        """Set up relationships between drivers based on predefined rivalries."""
+        # Create a name -> driver lookup
+        name_to_driver = {d["name"]: d for d in self._all_drivers}
+
+        # Apply predefined relationships
+        for driver1_name, driver2_name, rel_type, intensity, reason in DRIVER_RIVALRIES:
+            driver1 = name_to_driver.get(driver1_name)
+            driver2 = name_to_driver.get(driver2_name)
+
+            if driver1 and driver2:
+                # Add relationship to both drivers
+                driver1["relationships"].append({
+                    "other_driver_id": driver2["id"],
+                    "other_driver_name": driver2["name"],
+                    "relationship_type": rel_type,
+                    "intensity": intensity,
+                    "reason": reason,
+                    "past_incidents": 0
+                })
+                driver2["relationships"].append({
+                    "other_driver_id": driver1["id"],
+                    "other_driver_name": driver1["name"],
+                    "relationship_type": rel_type,
+                    "intensity": intensity,
+                    "reason": reason,
+                    "past_incidents": 0
+                })
+
+        # Add teammate relationships (neutral to friendly)
+        teams_drivers: Dict[str, List[Dict]] = {}
+        for driver in self._all_drivers:
+            team = driver.get("team_name")
+            if team:
+                if team not in teams_drivers:
+                    teams_drivers[team] = []
+                teams_drivers[team].append(driver)
+
+        for team, drivers in teams_drivers.items():
+            if len(drivers) >= 2:
+                for i, d1 in enumerate(drivers):
+                    for d2 in drivers[i+1:]:
+                        # Check if relationship already exists
+                        existing = [r for r in d1["relationships"] if r["other_driver_name"] == d2["name"]]
+                        if not existing:
+                            rel_type = random.choice(["neutral", "respect", "friendship"])
+                            intensity = random.randint(30, 60)
+                            d1["relationships"].append({
+                                "other_driver_id": d2["id"],
+                                "other_driver_name": d2["name"],
+                                "relationship_type": rel_type,
+                                "intensity": intensity,
+                                "reason": "Teammates",
+                                "past_incidents": 0
+                            })
+                            d2["relationships"].append({
+                                "other_driver_id": d1["id"],
+                                "other_driver_name": d1["name"],
+                                "relationship_type": rel_type,
+                                "intensity": intensity,
+                                "reason": "Teammates",
+                                "past_incidents": 0
+                            })
+
+    def _setup_reserve_drivers(self):
+        """Create a pool of reserve drivers for injuries."""
+        reserve_names = [
+            ("Jack Doohan", "Australian", 23),
+            ("Theo Pourchaire", "French", 21),
+            ("Frederik Vesti", "Danish", 22),
+            ("Nyck de Vries", "Dutch", 29),
+            ("Robert Shwartzman", "Israeli", 25),
+        ]
+
+        for i, (name, nationality, age) in enumerate(reserve_names):
+            stats = {
+                "pace": random.randint(65, 75),
+                "overtaking": random.randint(60, 72),
+                "defending": random.randint(60, 72),
+                "consistency": random.randint(62, 74),
+                "tire_management": random.randint(60, 72),
+                "wet_skill": random.randint(60, 72),
+            }
+            self.reserve_drivers.append({
+                "id": f"reserve_{i}",
+                "name": name,
+                "age": age,
+                "nationality": nationality,
+                "stats": stats,
+                "overall": calc_overall(stats),
+                "salary": 0.5,
+                "market_value": 2,
+                "is_reserve": True,
+                "traits": [random.choice(list(DRIVER_TRAITS.keys()))],
+                "relationships": [],
+                "injury": {"injury_type": "none", "description": "", "races_remaining": 0, "performance_penalty": 0},
+                "form": {"level": "normal", "races_in_form": 0, "recent_results": [], "media_pressure": 0},
+            })
 
     def _setup_ai_teams(self):
         """Set up AI team data."""
@@ -2248,6 +2514,15 @@ class MultiplayerGameState:
         # AI teams get prize money and upgrades
         self._process_ai_teams_race_end()
 
+        # Update driver form based on results
+        self._update_driver_form()
+
+        # Process injuries from incidents
+        self._process_injuries()
+
+        # Generate news headlines
+        self._generate_news_headlines()
+
         # Rotate turn order for fairness
         self._rotate_turn_order()
 
@@ -2341,6 +2616,7 @@ class MultiplayerGameState:
             stats = ["downforce", "aero_efficiency", "chassis", "power_unit", "reliability", "tire_cooling"]
             weakest_stat = min(stats, key=lambda s: car[s])
             current_value = car[weakest_stat]
+            old_value = current_value
 
             # Get upgrade cost
             cost = get_upgrade_cost(current_value)
@@ -2362,8 +2638,362 @@ class MultiplayerGameState:
 
             ai_team["upgrade_budget"] = upgrade_budget
 
+            # Track upgrade history for Other Teams menu
+            if upgrades_done > 0:
+                stat_display_names = {
+                    "downforce": "Downforce", "aero_efficiency": "Aero Efficiency",
+                    "chassis": "Chassis", "power_unit": "Power Unit",
+                    "reliability": "Reliability", "tire_cooling": "Tire Cooling"
+                }
+                self.ai_team_upgrades[team_name].append({
+                    "race_number": self.current_race,
+                    "stat_name": stat_display_names.get(weakest_stat, weakest_stat),
+                    "old_value": old_value,
+                    "new_value": car[weakest_stat],
+                    "description": f"+{car[weakest_stat] - old_value} {stat_display_names.get(weakest_stat, weakest_stat)}"
+                })
+
             # Update AI team reputation based on car quality
             ai_team["reputation"] = calc_car_overall(car)
+
+    def _generate_news_headlines(self):
+        """Generate news headlines after a race."""
+        self.news_headlines = []
+        track = self._tracks[self.current_race - 1] if self.current_race > 0 else {"name": "Unknown"}
+        track_name = track.get("name", "Unknown")
+
+        # Get race results sorted by position
+        active_entries = [e for e in self.race_entries if not e.get("dnf", False)]
+        active_entries.sort(key=lambda e: e.get("position", 99))
+
+        # Winner headline
+        if active_entries:
+            winner = active_entries[0]
+            template = random.choice(NEWS_TEMPLATES["race_win"])
+            self.news_headlines.append({
+                "id": f"news_{uuid.uuid4().hex[:8]}",
+                "category": "race_result",
+                "headline": template.format(driver=winner["driver_name"], team=winner["team_name"], track=track_name),
+                "body": f"{winner['driver_name']} took a commanding victory at {track_name}, leading {winner['team_name']} to glory.",
+                "race_number": self.current_race,
+                "driver_name": winner["driver_name"],
+                "team_name": winner["team_name"],
+                "is_about_player": winner.get("player_id") is not None,
+                "player_id": winner.get("player_id"),
+            })
+
+        # Podium headlines for player drivers
+        for entry in active_entries[1:3]:
+            if entry.get("player_id"):
+                template = random.choice(NEWS_TEMPLATES["podium"])
+                self.news_headlines.append({
+                    "id": f"news_{uuid.uuid4().hex[:8]}",
+                    "category": "driver_performance",
+                    "headline": template.format(driver=entry["driver_name"], team=entry["team_name"], position=entry["position"], track=track_name),
+                    "body": f"{entry['driver_name']} secured a strong P{entry['position']} finish for {entry['team_name']}.",
+                    "race_number": self.current_race,
+                    "driver_name": entry["driver_name"],
+                    "team_name": entry["team_name"],
+                    "is_about_player": True,
+                    "player_id": entry.get("player_id"),
+                })
+
+        # DNF headlines
+        dnf_entries = [e for e in self.race_entries if e.get("dnf", False)]
+        for entry in dnf_entries[:2]:  # Max 2 DNF headlines
+            template = random.choice(NEWS_TEMPLATES["dnf"])
+            self.news_headlines.append({
+                "id": f"news_{uuid.uuid4().hex[:8]}",
+                "category": "race_result",
+                "headline": template.format(driver=entry["driver_name"], track=track_name),
+                "body": f"A frustrating day for {entry['driver_name']} who was forced to retire from the race.",
+                "race_number": self.current_race,
+                "driver_name": entry["driver_name"],
+                "team_name": entry["team_name"],
+                "is_about_player": entry.get("player_id") is not None,
+                "player_id": entry.get("player_id"),
+            })
+
+        # Hot streak headlines
+        for driver in self._all_drivers:
+            if driver.get("form", {}).get("level") == "hot_streak":
+                races_in_form = driver.get("form", {}).get("races_in_form", 0)
+                if races_in_form >= 3:
+                    template = random.choice(NEWS_TEMPLATES["hot_streak"])
+                    self.news_headlines.append({
+                        "id": f"news_{uuid.uuid4().hex[:8]}",
+                        "category": "driver_performance",
+                        "headline": template.format(driver=driver["name"], streak=races_in_form),
+                        "body": f"{driver['name']} continues their incredible run of form with {races_in_form} consecutive strong results.",
+                        "race_number": self.current_race,
+                        "driver_name": driver["name"],
+                        "is_about_player": driver.get("player_id") is not None,
+                        "player_id": driver.get("player_id"),
+                    })
+                    break  # Only one hot streak headline per race
+
+        # Slump headlines
+        for driver in self._all_drivers:
+            if driver.get("form", {}).get("level") == "slump" and driver.get("player_id"):
+                template = random.choice(NEWS_TEMPLATES["slump"])
+                self.news_headlines.append({
+                    "id": f"news_{uuid.uuid4().hex[:8]}",
+                    "category": "driver_performance",
+                    "headline": template.format(driver=driver["name"]),
+                    "body": f"Questions are being asked about {driver['name']}'s recent performances.",
+                    "race_number": self.current_race,
+                    "driver_name": driver["name"],
+                    "is_about_player": True,
+                    "player_id": driver.get("player_id"),
+                })
+                break  # Only one slump headline
+
+        # Team upgrade headlines
+        for team_name, upgrades in self.ai_team_upgrades.items():
+            recent_upgrades = [u for u in upgrades if u["race_number"] == self.current_race]
+            if recent_upgrades:
+                template = random.choice(NEWS_TEMPLATES["team_upgrade"])
+                self.news_headlines.append({
+                    "id": f"news_{uuid.uuid4().hex[:8]}",
+                    "category": "team_news",
+                    "headline": template.format(team=team_name, track=track_name),
+                    "body": f"{team_name} have brought car updates to {track_name}: {recent_upgrades[0]['description']}.",
+                    "race_number": self.current_race,
+                    "team_name": team_name,
+                    "is_about_player": False,
+                })
+
+    def _update_driver_form(self):
+        """Update driver form based on recent results."""
+        for driver in self._all_drivers:
+            # Find driver's race result
+            result_pos = 99
+            had_dnf = False
+            for entry in self.race_entries:
+                if entry["driver_name"] == driver["name"]:
+                    if entry.get("dnf", False):
+                        had_dnf = True
+                        result_pos = 25  # DNF counted as bad result
+                    else:
+                        result_pos = entry.get("position", 99)
+                    break
+
+            # Skip if driver wasn't in race
+            if result_pos == 99 and not had_dnf:
+                continue
+
+            form = driver.get("form", {"level": "normal", "races_in_form": 0, "recent_results": [], "media_pressure": 0})
+
+            # Update recent results (keep last 5)
+            form["recent_results"] = (form.get("recent_results", []) + [result_pos])[-5:]
+
+            # Calculate average recent position
+            avg_pos = sum(form["recent_results"]) / len(form["recent_results"]) if form["recent_results"] else 15
+
+            # Determine new form level based on driver quality and results
+            overall = driver.get("overall", 70)
+            expected_pos = max(1, 21 - (overall / 5))  # Higher rated drivers expected to finish higher
+
+            current_level = form.get("level", "normal")
+            new_level = current_level
+            races_in_form = form.get("races_in_form", 0)
+
+            if avg_pos <= expected_pos - 3:
+                # Performing much better than expected
+                if current_level == "hot_streak":
+                    races_in_form += 1
+                elif current_level == "good_form":
+                    new_level = "hot_streak"
+                    races_in_form = 1
+                else:
+                    new_level = "good_form"
+                    races_in_form = 1
+            elif avg_pos <= expected_pos:
+                # Performing at or above expected level
+                if current_level in ["slump", "poor_form"]:
+                    new_level = "normal"
+                    races_in_form = 0
+                elif current_level == "good_form":
+                    races_in_form += 1
+            elif avg_pos >= expected_pos + 5:
+                # Performing much worse than expected
+                if current_level == "slump":
+                    races_in_form += 1
+                elif current_level == "poor_form":
+                    new_level = "slump"
+                    races_in_form = 1
+                else:
+                    new_level = "poor_form"
+                    races_in_form = 1
+            elif avg_pos >= expected_pos + 2:
+                # Performing worse than expected
+                if current_level in ["hot_streak", "good_form"]:
+                    new_level = "normal"
+                    races_in_form = 0
+                elif current_level == "poor_form":
+                    races_in_form += 1
+
+            # Media pressure increases for player drivers in bad form
+            if driver.get("player_id") and new_level in ["poor_form", "slump"]:
+                form["media_pressure"] = min(100, form.get("media_pressure", 0) + 10)
+            elif new_level in ["good_form", "hot_streak"]:
+                form["media_pressure"] = max(0, form.get("media_pressure", 0) - 5)
+
+            form["level"] = new_level
+            form["races_in_form"] = races_in_form
+            driver["form"] = form
+
+            # Update confidence based on form
+            if new_level == "hot_streak":
+                driver["confidence"] = min(100, driver.get("confidence", 75) + 5)
+            elif new_level == "good_form":
+                driver["confidence"] = min(100, driver.get("confidence", 75) + 2)
+            elif new_level == "poor_form":
+                driver["confidence"] = max(20, driver.get("confidence", 75) - 3)
+            elif new_level == "slump":
+                driver["confidence"] = max(10, driver.get("confidence", 75) - 5)
+
+    def _process_injuries(self):
+        """Process injuries from race incidents and heal existing injuries."""
+        track = self._tracks[self.current_race - 1] if self.current_race > 0 else {"name": "Unknown"}
+
+        # Heal existing injuries
+        for driver in self._all_drivers:
+            injury = driver.get("injury", {})
+            if injury.get("injury_type") != "none" and injury.get("races_remaining", 0) > 0:
+                injury["races_remaining"] -= 1
+                if injury["races_remaining"] <= 0:
+                    injury["injury_type"] = "none"
+                    injury["description"] = ""
+                    injury["performance_penalty"] = 0
+                    # Add news headline about recovery
+                    self.news_headlines.append({
+                        "id": f"news_{uuid.uuid4().hex[:8]}",
+                        "category": "injury",
+                        "headline": f"{driver['name']} returns from injury",
+                        "body": f"{driver['name']} has made a full recovery and is back racing at 100%.",
+                        "race_number": self.current_race,
+                        "driver_name": driver["name"],
+                        "is_about_player": driver.get("player_id") is not None,
+                        "player_id": driver.get("player_id"),
+                    })
+
+        # Check for new injuries from DNFs (especially if caused by incidents)
+        for event in self.race_events:
+            if event.get("event_type") in ["dnf", "incident"]:
+                driver_name = event.get("driver_name")
+                if not driver_name:
+                    continue
+
+                # Find the driver
+                driver = next((d for d in self._all_drivers if d["name"] == driver_name), None)
+                if not driver:
+                    continue
+
+                # Skip if already injured
+                if driver.get("injury", {}).get("injury_type") != "none":
+                    continue
+
+                # Determine injury chance based on incident type
+                incident_type = "minor_incident"
+                if "crash" in event.get("description", "").lower():
+                    incident_type = "crash"
+                elif "major" in event.get("description", "").lower() or "heavy" in event.get("description", "").lower():
+                    incident_type = "major_incident"
+
+                injury_chance = INJURY_CHANCES.get(incident_type, 0.05)
+
+                if random.random() < injury_chance:
+                    # Determine injury severity
+                    severity_roll = random.random()
+                    if severity_roll < 0.6:
+                        injury_type = "minor"
+                        races_out = 0
+                        performance_penalty = random.randint(5, 15)
+                        description = "Minor muscle strain - racing with reduced performance"
+                    elif severity_roll < 0.85:
+                        injury_type = "moderate"
+                        races_out = random.randint(1, 2)
+                        performance_penalty = 0
+                        description = f"Injured - out for {races_out} race(s)"
+                    elif severity_roll < 0.98:
+                        injury_type = "severe"
+                        races_out = random.randint(3, 5)
+                        performance_penalty = 0
+                        description = f"Serious injury - out for {races_out} races"
+                    else:
+                        injury_type = "career_threatening"
+                        races_out = 99  # Season-ending
+                        performance_penalty = 0
+                        description = "Season-ending injury"
+
+                    driver["injury"] = {
+                        "injury_type": injury_type,
+                        "description": description,
+                        "races_remaining": races_out,
+                        "performance_penalty": performance_penalty,
+                        "caused_by": event.get("description", "")
+                    }
+
+                    # Generate injury news headline
+                    template = random.choice(NEWS_TEMPLATES["injury"])
+                    self.news_headlines.append({
+                        "id": f"news_{uuid.uuid4().hex[:8]}",
+                        "category": "injury",
+                        "headline": template.format(driver=driver_name, track=track.get("name", "Unknown")),
+                        "body": f"{driver_name} has suffered a {injury_type} injury: {description}",
+                        "race_number": self.current_race,
+                        "driver_name": driver_name,
+                        "is_about_player": driver.get("player_id") is not None,
+                        "player_id": driver.get("player_id"),
+                    })
+
+                    # If driver needs to miss races, notify team
+                    if races_out > 0 and driver.get("player_id"):
+                        self._add_inbox_message(
+                            driver["player_id"],
+                            "INJURY REPORT",
+                            f"{driver_name} has been injured and will miss {races_out} race(s). A reserve driver will be called up.",
+                            MessageType.TEAM_UPDATE,
+                            MessagePriority.URGENT
+                        )
+
+    def get_rival_teams_info(self) -> List[Dict]:
+        """Get information about all AI teams for the Other Teams menu."""
+        rival_teams = []
+
+        for team_name, ai_team in self._ai_teams.items():
+            car = ai_team["car"]
+            car_overall = calc_car_overall(car)
+
+            # Get drivers for this team
+            team_drivers = [d["name"] for d in self._all_drivers if d.get("team_name") == team_name]
+
+            # Get constructor position
+            position = 0
+            for i, cs in enumerate(self._constructor_standings):
+                if cs["team_name"] == team_name:
+                    position = i + 1
+                    break
+
+            # Get recent upgrades (last 5)
+            recent_upgrades = self.ai_team_upgrades.get(team_name, [])[-5:]
+
+            rival_teams.append({
+                "name": team_name,
+                "car_overall": car_overall,
+                "car_stats": car.copy(),
+                "drivers": team_drivers,
+                "season_points": ai_team.get("season_points", 0),
+                "race_wins": ai_team.get("race_wins", 0),
+                "recent_upgrades": recent_upgrades,
+                "constructor_position": position,
+            })
+
+        # Sort by constructor position
+        rival_teams.sort(key=lambda t: t["constructor_position"] if t["constructor_position"] > 0 else 999)
+
+        return rival_teams
 
     def _process_driver_growth(self):
         """Process driver stat growth/decline at season end."""
@@ -2967,6 +3597,41 @@ class MultiplayerGameState:
         min_cost = self.get_min_driver_cost(player_id) if self.phase == GamePhase.TEAM_SETUP else 0
         drivers_needed = 2 - len(team_data["drivers"]) if team_data else 2
 
+        # Build rival teams info
+        rival_teams_info = None
+        if self.phase == GamePhase.MAIN_MENU:
+            rival_teams_info = [
+                RivalTeamInfo(
+                    name=rt["name"],
+                    car_overall=rt["car_overall"],
+                    car_stats=CarStats(**rt["car_stats"]),
+                    drivers=rt["drivers"],
+                    season_points=rt["season_points"],
+                    race_wins=rt["race_wins"],
+                    recent_upgrades=[TeamUpgradeHistory(**u) for u in rt["recent_upgrades"]],
+                    constructor_position=rt["constructor_position"]
+                )
+                for rt in self.get_rival_teams_info()
+            ]
+
+        # Build news headlines
+        news_headlines = None
+        if self.phase == GamePhase.RACE_RESULTS and self.news_headlines:
+            news_headlines = [
+                NewsHeadline(
+                    id=nh["id"],
+                    category=nh["category"],
+                    headline=nh["headline"],
+                    body=nh["body"],
+                    race_number=nh["race_number"],
+                    driver_name=nh.get("driver_name"),
+                    team_name=nh.get("team_name"),
+                    is_about_player=nh.get("is_about_player", False),
+                    player_id=nh.get("player_id")
+                )
+                for nh in self.news_headlines
+            ]
+
         return GameStateResponse(
             game_id=self.game_id,
             phase=self.phase,
@@ -2994,6 +3659,8 @@ class MultiplayerGameState:
             inbox=inbox if inbox else None,
             min_driver_cost=min_cost,
             drivers_needed=drivers_needed,
+            rival_teams=rival_teams_info,
+            news_headlines=news_headlines,
             game_stopped=self.game_stopped,
             stopped_by=self.stopped_by
         )
@@ -3009,6 +3676,41 @@ class MultiplayerGameState:
                     salary=d["salary"],
                     is_number_one=d.get("is_number_one", False)
                 )
+            # Build form info
+            form_data = d.get("form", {})
+            form_info = None
+            if form_data:
+                form_info = DriverForm(
+                    level=form_data.get("level", "normal"),
+                    races_in_form=form_data.get("races_in_form", 0),
+                    recent_results=form_data.get("recent_results", []),
+                    media_pressure=form_data.get("media_pressure", 0)
+                )
+
+            # Build injury info
+            injury_data = d.get("injury", {})
+            injury_info = None
+            if injury_data and injury_data.get("injury_type") != "none":
+                injury_info = DriverInjury(
+                    injury_type=injury_data.get("injury_type", "none"),
+                    description=injury_data.get("description", ""),
+                    races_remaining=injury_data.get("races_remaining", 0),
+                    performance_penalty=injury_data.get("performance_penalty", 0)
+                )
+
+            # Build relationships
+            relationships = [
+                DriverRelationship(
+                    other_driver_id=r["other_driver_id"],
+                    other_driver_name=r["other_driver_name"],
+                    relationship_type=r["relationship_type"],
+                    intensity=r.get("intensity", 50),
+                    reason=r.get("reason", ""),
+                    past_incidents=r.get("past_incidents", 0)
+                )
+                for r in d.get("relationships", [])[:5]  # Limit to 5 most important
+            ]
+
             drivers.append(DriverInfo(
                 id=d["id"], name=d["name"], age=d["age"],
                 nationality=d["nationality"],
@@ -3023,7 +3725,11 @@ class MultiplayerGameState:
                 confidence=d.get("confidence", 75),
                 contract=contract,
                 is_player_driver=d.get("player_id") is not None,
-                player_id=d.get("player_id")
+                player_id=d.get("player_id"),
+                traits=d.get("traits", []),
+                relationships=relationships,
+                injury=injury_info,
+                form=form_info
             ))
 
         car = team_data.get("car", {})

@@ -3437,15 +3437,69 @@ class MultiplayerGameState:
                 overtaking_difficulty=t.get("overtaking_difficulty", 5) / 10.0
             )
 
-        # Qualifying results
+        # Qualifying results - return appropriate session results based on phase
+        quali_source = self.qualifying_results
+        if self.phase == GamePhase.QUALIFYING_Q1:
+            quali_source = self.q1_results
+        elif self.phase == GamePhase.QUALIFYING_Q2:
+            # For Q2, combine Q1 results with elimination info
+            quali_source = []
+            for r in self.q1_results:
+                result = dict(r)
+                if r["driver_name"] in self.eliminated_q1:
+                    result["eliminated_in"] = "Q1"
+                quali_source.append(result)
+        elif self.phase == GamePhase.QUALIFYING_Q3:
+            # For Q3, show combined results with elimination info
+            quali_source = []
+            for r in self.q1_results:
+                result = dict(r)
+                if r["driver_name"] in self.eliminated_q1:
+                    result["eliminated_in"] = "Q1"
+                elif r["driver_name"] in self.eliminated_q2:
+                    result["eliminated_in"] = "Q2"
+                # Add Q2 time if available
+                for q2r in self.q2_results:
+                    if q2r["driver_name"] == r["driver_name"]:
+                        result["q2_time"] = q2r["lap_time"]
+                        break
+                # Add Q3 time if available
+                for q3r in self.q3_results:
+                    if q3r["driver_name"] == r["driver_name"]:
+                        result["q3_time"] = q3r["lap_time"]
+                        break
+                quali_source.append(result)
+        elif self.phase == GamePhase.SPRINT_SHOOTOUT_Q1:
+            quali_source = self.q1_results
+        elif self.phase == GamePhase.SPRINT_SHOOTOUT_Q2:
+            quali_source = []
+            for r in self.q1_results:
+                result = dict(r)
+                if r["driver_name"] in self.eliminated_q1:
+                    result["eliminated_in"] = "SQ1"
+                quali_source.append(result)
+        elif self.phase == GamePhase.SPRINT_SHOOTOUT_Q3:
+            quali_source = []
+            for r in self.q1_results:
+                result = dict(r)
+                if r["driver_name"] in self.eliminated_q1:
+                    result["eliminated_in"] = "SQ1"
+                elif r["driver_name"] in self.eliminated_q2:
+                    result["eliminated_in"] = "SQ2"
+                quali_source.append(result)
+
         qual_results = [
             QualifyingResult(
                 position=q["position"], driver_name=q["driver_name"],
                 team_name=q["team_name"], lap_time=q["lap_time"],
                 is_player_driver=q.get("is_player_driver", False),
-                player_id=q.get("player_id")
+                player_id=q.get("player_id"),
+                eliminated_in=q.get("eliminated_in"),
+                q1_time=q.get("q1_time") or q.get("lap_time"),
+                q2_time=q.get("q2_time"),
+                q3_time=q.get("q3_time")
             )
-            for q in self.qualifying_results
+            for q in quali_source
         ]
 
         # Race state

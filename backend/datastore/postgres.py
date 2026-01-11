@@ -1,11 +1,13 @@
 import uuid
+import json
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 
 import asyncpg
 
 from .interface import DatastoreInterface
 from ..models.user import User, UserUpdate, UserInDB
+from ..models.game import Game, GameInvite, GamePlayer, GameStatus, InviteStatus
 
 
 class PostgresDatastore(DatastoreInterface):
@@ -53,6 +55,38 @@ class PostgresDatastore(DatastoreInterface):
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_tokens_expires ON token_blacklist(expires_at);
+
+                CREATE TABLE IF NOT EXISTS games (
+                    id UUID PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL,
+                    creator_id UUID NOT NULL REFERENCES users(id),
+                    creator_username VARCHAR(50) NOT NULL,
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    players JSONB NOT NULL DEFAULT '[]',
+                    max_players INTEGER NOT NULL DEFAULT 2,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW(),
+                    started_at TIMESTAMPTZ,
+                    completed_at TIMESTAMPTZ
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_games_creator ON games(creator_id);
+                CREATE INDEX IF NOT EXISTS idx_games_status ON games(status);
+
+                CREATE TABLE IF NOT EXISTS game_invites (
+                    id UUID PRIMARY KEY,
+                    game_id UUID NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+                    inviter_id UUID NOT NULL REFERENCES users(id),
+                    invitee_id UUID NOT NULL REFERENCES users(id),
+                    invitee_username VARCHAR(50) NOT NULL,
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    responded_at TIMESTAMPTZ
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_invites_game ON game_invites(game_id);
+                CREATE INDEX IF NOT EXISTS idx_invites_invitee ON game_invites(invitee_id);
+                CREATE INDEX IF NOT EXISTS idx_invites_status ON game_invites(status);
             """)
 
     async def create_user(self, email: str, username: str, password_hash: str) -> User:
@@ -270,4 +304,206 @@ class PostgresDatastore(DatastoreInterface):
             updated_at=row["updated_at"],
             last_login=row["last_login"],
             is_active=row["is_active"],
+        )
+
+    # Game operations
+    async def create_game(self, game: Game) -> Game:
+        """Create a new game."""
+        players_json = json.dumps([p.model_dump() for p in game.players], default=str)
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO games (id, name, creator_id, creator_username, status, players, max_players, created_at, updated_at, started_at, completed_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                """,
+                uuid.UUID(game.id),
+                game.name,
+                uuid.UUID(game.creator_id),
+                game.creator_username,
+                game.status.value,
+                players_json,
+                game.max_players,
+                game.created_at,
+                game.updated_at,
+                game.started_at,
+                game.completed_at,
+            )
+        return game
+
+    async def get_game_by_id(self, game_id: str) -> Optional[Game]:
+        """Get game by ID."""
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM games WHERE id = $1",
+                uuid.UUID(game_id),
+            )
+            if not row:
+                return None
+            return self._row_to_game(row)
+
+    async def get_games_for_user(self, user_id: str) -> List[Game]:
+        """Get all games where user is a player or creator."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM games
+                WHERE creator_id = $1
+                   OR players::jsonb @> $2::jsonb
+                ORDER BY updated_at DESC
+                """,
+                uuid.UUID(user_id),
+                json.dumps([{"user_id": user_id}]),
+            )
+            return [self._row_to_game(row) for row in rows]
+
+    async def update_game(self, game: Game) -> Optional[Game]:
+        """Update a game."""
+        players_json = json.dumps([p.model_dump() for p in game.players], default=str)
+        async with self._pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE games SET name = $1, status = $2, players = $3, updated_at = $4, started_at = $5, completed_at = $6
+                WHERE id = $7
+                """,
+                game.name,
+                game.status.value,
+                players_json,
+                game.updated_at,
+                game.started_at,
+                game.completed_at,
+                uuid.UUID(game.id),
+            )
+            if result == "UPDATE 0":
+                return None
+            return game
+
+    async def delete_game(self, game_id: str) -> bool:
+        """Delete a game."""
+        async with self._pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM games WHERE id = $1",
+                uuid.UUID(game_id),
+            )
+            return result == "DELETE 1"
+
+    # Game invite operations
+    async def create_invite(self, invite: GameInvite) -> GameInvite:
+        """Create a game invite."""
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO game_invites (id, game_id, inviter_id, invitee_id, invitee_username, status, created_at, responded_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """,
+                uuid.UUID(invite.id),
+                uuid.UUID(invite.game_id),
+                uuid.UUID(invite.inviter_id),
+                uuid.UUID(invite.invitee_id),
+                invite.invitee_username,
+                invite.status.value,
+                invite.created_at,
+                invite.responded_at,
+            )
+        return invite
+
+    async def get_invite_by_id(self, invite_id: str) -> Optional[GameInvite]:
+        """Get invite by ID."""
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM game_invites WHERE id = $1",
+                uuid.UUID(invite_id),
+            )
+            if not row:
+                return None
+            return self._row_to_invite(row)
+
+    async def get_pending_invites_for_game(self, game_id: str) -> List[GameInvite]:
+        """Get all pending invites for a game."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM game_invites WHERE game_id = $1 AND status = $2",
+                uuid.UUID(game_id),
+                InviteStatus.PENDING.value,
+            )
+            return [self._row_to_invite(row) for row in rows]
+
+    async def get_pending_invites_for_user(self, user_id: str) -> List[GameInvite]:
+        """Get all pending invites received by a user."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM game_invites WHERE invitee_id = $1 AND status = $2",
+                uuid.UUID(user_id),
+                InviteStatus.PENDING.value,
+            )
+            return [self._row_to_invite(row) for row in rows]
+
+    async def update_invite(self, invite: GameInvite) -> Optional[GameInvite]:
+        """Update an invite."""
+        async with self._pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE game_invites SET status = $1, responded_at = $2
+                WHERE id = $3
+                """,
+                invite.status.value,
+                invite.responded_at,
+                uuid.UUID(invite.id),
+            )
+            if result == "UPDATE 0":
+                return None
+            return invite
+
+    async def search_users_by_username(self, query: str, exclude_user_id: str, limit: int = 10) -> List[User]:
+        """Search users by username prefix."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, email, username, created_at, updated_at, last_login, is_active
+                FROM users
+                WHERE LOWER(username) LIKE LOWER($1) AND id != $2
+                LIMIT $3
+                """,
+                f"{query}%",
+                uuid.UUID(exclude_user_id),
+                limit,
+            )
+            return [self._row_to_user(row) for row in rows]
+
+    def _row_to_game(self, row: asyncpg.Record) -> Game:
+        """Convert database row to Game model."""
+        players_data = row["players"] if isinstance(row["players"], list) else json.loads(row["players"])
+        players = []
+        for p in players_data:
+            players.append(GamePlayer(
+                user_id=p["user_id"],
+                username=p["username"],
+                team_name=p.get("team_name"),
+                joined_at=datetime.fromisoformat(p["joined_at"].replace("Z", "+00:00")) if isinstance(p["joined_at"], str) else p["joined_at"],
+                is_creator=p.get("is_creator", False),
+            ))
+        return Game(
+            id=str(row["id"]),
+            name=row["name"],
+            creator_id=str(row["creator_id"]),
+            creator_username=row["creator_username"],
+            status=GameStatus(row["status"]),
+            players=players,
+            max_players=row["max_players"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
+        )
+
+    def _row_to_invite(self, row: asyncpg.Record) -> GameInvite:
+        """Convert database row to GameInvite model."""
+        return GameInvite(
+            id=str(row["id"]),
+            game_id=str(row["game_id"]),
+            inviter_id=str(row["inviter_id"]),
+            invitee_id=str(row["invitee_id"]),
+            invitee_username=row["invitee_username"],
+            status=InviteStatus(row["status"]),
+            created_at=row["created_at"],
+            responded_at=row["responded_at"],
         )

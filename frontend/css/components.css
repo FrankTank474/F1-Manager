@@ -52,6 +52,15 @@
     color: #ffffff;
 }
 
+.btn-danger {
+    background-color: var(--error);
+    color: #ffffff;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background-color: #c0392b;
+}
+
 .btn-block {
     width: 100%;
 }
@@ -383,6 +392,85 @@
 .feature-description {
     font-size: var(--font-sm);
     color: var(--text-secondary);
+}
+
+/* Status badges */
+.status-badge {
+    display: inline-block;
+    padding: var(--space-xs) var(--space-sm);
+    font-size: var(--font-xs);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-radius: var(--radius-sm);
+}
+
+.status-pending {
+    background-color: var(--warning-bg);
+    color: var(--warning);
+}
+
+.status-active {
+    background-color: var(--success-bg);
+    color: var(--success);
+}
+
+.status-completed {
+    background-color: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.status-stopped {
+    background-color: var(--info-bg, var(--bg-tertiary));
+    color: var(--info, #3498db);
+}
+
+/* Utility classes */
+.flex {
+    display: flex;
+}
+
+.gap-sm {
+    gap: var(--space-sm);
+}
+
+.gap-md {
+    gap: var(--space-md);
+}
+
+.mt-sm {
+    margin-top: var(--space-sm);
+}
+
+.mt-md {
+    margin-top: var(--space-md);
+}
+
+.mt-lg {
+    margin-top: var(--space-lg);
+}
+
+.mt-xl {
+    margin-top: var(--space-xl);
+}
+
+.mb-md {
+    margin-bottom: var(--space-md);
+}
+
+/* Game cards */
+.game-card {
+    cursor: default;
+    transition: box-shadow var(--transition-fast);
+}
+
+.game-card:hover {
+    box-shadow: 0 4px 12px var(--shadow-lg);
+}
+
+.invite-card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--accent-primary);
 }
 
 /* Responsive adjustments */

@@ -6,6 +6,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from .datastore.interface import DatastoreInterface
 from .services.auth_service import AuthService
 from .services.user_service import UserService
+from .services.game_service import GameService
 
 # Global datastore instance (set during app startup)
 _datastore: Optional[DatastoreInterface] = None
@@ -39,6 +40,13 @@ def get_user_service(
 ) -> UserService:
     """Get user service instance."""
     return UserService(datastore)
+
+
+def get_game_service(
+    datastore: DatastoreInterface = Depends(get_datastore),
+) -> GameService:
+    """Get game service instance."""
+    return GameService(datastore)
 
 
 async def get_current_user_id(

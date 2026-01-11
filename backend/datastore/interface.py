@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Optional, List
 
 from ..models.user import User, UserCreate, UserUpdate, UserInDB
+from ..models.game import Game, GameInvite, GameStatus, InviteStatus
 
 
 class DatastoreInterface(ABC):
@@ -73,4 +74,61 @@ class DatastoreInterface(ABC):
     @abstractmethod
     async def cleanup_expired_tokens(self) -> int:
         """Remove expired tokens from blacklist. Returns count removed."""
+        pass
+
+    # Game operations
+    @abstractmethod
+    async def create_game(self, game: Game) -> Game:
+        """Create a new game."""
+        pass
+
+    @abstractmethod
+    async def get_game_by_id(self, game_id: str) -> Optional[Game]:
+        """Get game by ID."""
+        pass
+
+    @abstractmethod
+    async def get_games_for_user(self, user_id: str) -> List[Game]:
+        """Get all games where user is a player or creator."""
+        pass
+
+    @abstractmethod
+    async def update_game(self, game: Game) -> Optional[Game]:
+        """Update a game."""
+        pass
+
+    @abstractmethod
+    async def delete_game(self, game_id: str) -> bool:
+        """Delete a game."""
+        pass
+
+    # Game invite operations
+    @abstractmethod
+    async def create_invite(self, invite: GameInvite) -> GameInvite:
+        """Create a game invite."""
+        pass
+
+    @abstractmethod
+    async def get_invite_by_id(self, invite_id: str) -> Optional[GameInvite]:
+        """Get invite by ID."""
+        pass
+
+    @abstractmethod
+    async def get_pending_invites_for_game(self, game_id: str) -> List[GameInvite]:
+        """Get all pending invites for a game."""
+        pass
+
+    @abstractmethod
+    async def get_pending_invites_for_user(self, user_id: str) -> List[GameInvite]:
+        """Get all pending invites received by a user."""
+        pass
+
+    @abstractmethod
+    async def update_invite(self, invite: GameInvite) -> Optional[GameInvite]:
+        """Update an invite."""
+        pass
+
+    @abstractmethod
+    async def search_users_by_username(self, query: str, exclude_user_id: str, limit: int = 10) -> List[User]:
+        """Search users by username prefix for invite suggestions."""
         pass

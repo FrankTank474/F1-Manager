@@ -1,8 +1,9 @@
 // Main application entry point
 import { auth } from './auth.js';
 import { router } from './router.js';
-import { showAlert, setButtonLoading, validatePassword, validateUsername, isValidEmail, formatDate, clearAlerts } from './utils.js';
-import { ApiError } from './api.js';
+import { showAlert, setButtonLoading, validatePassword, validateUsername, isValidEmail, formatDate, clearAlerts, escapeHtml, debounce } from './utils.js';
+import { api, ApiError } from './api.js';
+import { startGameSession } from './gameplay.js';
 
 // Theme management
 function initTheme() {
@@ -43,10 +44,10 @@ function updateNavbar() {
     if (auth.isAuthenticated()) {
         const user = auth.getUser();
         navAuth.innerHTML = `
-            <li><a href="#/dashboard">Dashboard</a></li>
+            <li><a href="#/games">My Games</a></li>
             <li class="user-menu" id="user-menu">
                 <button class="user-menu-button" id="user-menu-btn">
-                    ${user?.username || 'User'}
+                    ${escapeHtml(user?.username || 'User')}
                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M6 9l6 6 6-6"/>
                     </svg>
@@ -304,20 +305,399 @@ async function registerPage(container) {
     });
 }
 
-async function dashboardPage(container) {
+async function gamesPage(container) {
     const user = auth.getUser();
     container.innerHTML = `
         <div class="container" style="padding-top: var(--space-xl);">
-            <h1>Welcome, ${user?.username || 'Player'}!</h1>
-            <p class="mt-md">Your F1 Manager dashboard. Game features coming soon...</p>
+            <div class="flex" style="justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--space-md);">
+                <h1>My Games</h1>
+                <a href="#/games/new" class="btn btn-primary">Create New Game</a>
+            </div>
 
-            <div class="card mt-xl">
-                <h3>Quick Stats</h3>
-                <p class="mt-md text-secondary">Account created: ${formatDate(user?.created_at)}</p>
-                <p class="text-secondary">Last login: ${formatDate(user?.last_login)}</p>
+            <div id="pending-invites-section" class="mt-xl" style="display: none;">
+                <h3>Pending Invites</h3>
+                <div id="pending-invites-list" class="mt-md"></div>
+            </div>
+
+            <div class="mt-xl">
+                <h3>Your Games</h3>
+                <div id="games-list" class="mt-md">
+                    <div class="app-loading" style="min-height: 200px;">
+                        <div class="spinner"></div>
+                    </div>
+                </div>
             </div>
         </div>
     `;
+
+    // Load games and invites
+    await Promise.all([loadGames(), loadPendingInvites()]);
+}
+
+async function loadGames() {
+    const gamesList = document.getElementById('games-list');
+    if (!gamesList) return;
+
+    try {
+        const games = await api.get('/games');
+
+        if (games.length === 0) {
+            gamesList.innerHTML = `
+                <div class="card" style="text-align: center; padding: var(--space-2xl);">
+                    <p style="color: var(--text-secondary);">No games yet. Create your first game to get started!</p>
+                    <a href="#/games/new" class="btn btn-primary mt-lg">Create New Game</a>
+                </div>
+            `;
+            return;
+        }
+
+        gamesList.innerHTML = games.map(game => `
+            <div class="card mb-md game-card" data-game-id="${game.id}">
+                <div class="flex" style="justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: var(--space-md);">
+                    <div>
+                        <h4 style="margin-bottom: var(--space-xs);">${escapeHtml(game.name)}</h4>
+                        <p style="color: var(--text-secondary); font-size: var(--font-sm);">
+                            Created by ${escapeHtml(game.creator_username)} &bull;
+                            ${game.player_count}/${game.max_players} players &bull;
+                            <span class="status-badge status-${game.status}">${game.status}</span>
+                        </p>
+                    </div>
+                    <div class="flex gap-sm">
+                        ${game.status === 'pending' && game.is_creator ? `
+                            <button class="btn btn-primary btn-sm start-game-btn" data-game-id="${game.id}">Start Game</button>
+                            <a href="#/games/${game.id}" class="btn btn-secondary btn-sm">Manage</a>
+                        ` : ''}
+                        ${game.status === 'active' || game.status === 'stopped' ? `
+                            <a href="#/games/${game.id}/play" class="btn btn-primary btn-sm">${game.status === 'stopped' ? 'Resume' : 'Play'}</a>
+                        ` : ''}
+                        ${game.status === 'pending' && !game.is_creator ? `
+                            <span style="color: var(--text-muted); font-size: var(--font-sm);">Waiting to start...</span>
+                        ` : ''}
+                        <button class="btn btn-danger btn-sm delete-game-btn" data-game-id="${game.id}" data-game-name="${escapeHtml(game.name)}">Delete</button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+
+        // Add start game button event listeners
+        gamesList.querySelectorAll('.start-game-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const gameId = btn.dataset.gameId;
+
+                setButtonLoading(btn, true);
+                try {
+                    await api.post(`/games/${gameId}/start`);
+                    await loadGames();
+                } catch (error) {
+                    showAlert(gamesList, error.message || 'Failed to start game', 'error');
+                    setButtonLoading(btn, false);
+                }
+            });
+        });
+
+        // Add delete button event listeners
+        gamesList.querySelectorAll('.delete-game-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                const gameId = btn.dataset.gameId;
+                const gameName = btn.dataset.gameName;
+                if (!confirm(`Are you sure you want to delete "${gameName}"? This cannot be undone.`)) return;
+
+                setButtonLoading(btn, true);
+                try {
+                    await api.delete(`/games/${gameId}`);
+                    await loadGames();
+                } catch (error) {
+                    showAlert(gamesList, error.message || 'Failed to delete game', 'error');
+                    setButtonLoading(btn, false);
+                }
+            });
+        });
+    } catch (error) {
+        gamesList.innerHTML = `
+            <div class="alert alert-error">Failed to load games. Please try again.</div>
+        `;
+    }
+}
+
+async function loadPendingInvites() {
+    const section = document.getElementById('pending-invites-section');
+    const list = document.getElementById('pending-invites-list');
+    if (!section || !list) return;
+
+    try {
+        const invites = await api.get('/games/invites/pending');
+
+        if (invites.length === 0) {
+            section.style.display = 'none';
+            return;
+        }
+
+        section.style.display = 'block';
+        list.innerHTML = invites.map(invite => `
+            <div class="card mb-md invite-card" data-invite-id="${invite.id}">
+                <div class="flex" style="justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--space-md);">
+                    <div>
+                        <p><strong>${escapeHtml(invite.inviter_username)}</strong> invited you to join <strong>${escapeHtml(invite.game_name)}</strong></p>
+                        <p style="color: var(--text-muted); font-size: var(--font-sm);">${formatDate(invite.created_at)}</p>
+                    </div>
+                    <div class="flex gap-sm">
+                        <button class="btn btn-primary btn-sm accept-invite-btn" data-invite-id="${invite.id}">Accept</button>
+                        <button class="btn btn-secondary btn-sm decline-invite-btn" data-invite-id="${invite.id}">Decline</button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+
+        // Add event listeners
+        list.querySelectorAll('.accept-invite-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const inviteId = btn.dataset.inviteId;
+                setButtonLoading(btn, true);
+                try {
+                    await api.post(`/games/invites/${inviteId}/accept`);
+                    await Promise.all([loadGames(), loadPendingInvites()]);
+                } catch (error) {
+                    showAlert(list, error.message || 'Failed to accept invite', 'error');
+                }
+            });
+        });
+
+        list.querySelectorAll('.decline-invite-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const inviteId = btn.dataset.inviteId;
+                setButtonLoading(btn, true);
+                try {
+                    await api.post(`/games/invites/${inviteId}/decline`);
+                    await loadPendingInvites();
+                } catch (error) {
+                    showAlert(list, error.message || 'Failed to decline invite', 'error');
+                }
+            });
+        });
+    } catch (error) {
+        section.style.display = 'none';
+    }
+}
+
+async function newGamePage(container) {
+    container.innerHTML = `
+        <div class="page-center">
+            <div class="card container-sm">
+                <div class="card-header">
+                    <h2 class="card-title">Create New Game</h2>
+                    <p class="card-subtitle">Start a new F1 Manager career</p>
+                </div>
+                <form id="create-game-form">
+                    <div class="form-group">
+                        <label class="form-label" for="game-name">Game Name</label>
+                        <input type="text" id="game-name" class="form-input" placeholder="My Championship" required maxlength="100">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block btn-lg">Create Game</button>
+                </form>
+                <p class="form-link">
+                    <a href="#/games">Back to Games</a>
+                </p>
+            </div>
+        </div>
+    `;
+
+    const form = document.getElementById('create-game-form');
+    form?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = document.getElementById('game-name').value.trim();
+        const submitBtn = form.querySelector('button[type="submit"]');
+
+        if (!name) {
+            showAlert(form, 'Please enter a game name', 'error');
+            return;
+        }
+
+        clearAlerts(form);
+        setButtonLoading(submitBtn, true);
+
+        try {
+            const game = await api.post('/games', { name });
+            router.navigate(`/games/${game.id}`);
+        } catch (error) {
+            const message = error instanceof ApiError ? error.message : 'Failed to create game';
+            showAlert(form, message, 'error');
+            setButtonLoading(submitBtn, false);
+        }
+    });
+}
+
+async function gameDetailPage(container, gameId) {
+    container.innerHTML = `
+        <div class="container" style="padding-top: var(--space-xl);">
+            <div class="app-loading" style="min-height: 300px;">
+                <div class="spinner spinner-lg"></div>
+            </div>
+        </div>
+    `;
+
+    try {
+        const game = await api.get(`/games/${gameId}`);
+        const invites = game.status === 'pending' ? await api.get(`/games/${gameId}/invites`) : [];
+        const user = auth.getUser();
+        const isCreator = game.creator_id === user?.id;
+
+        container.innerHTML = `
+            <div class="container" style="padding-top: var(--space-xl);">
+                <div class="flex" style="justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: var(--space-md);">
+                    <div>
+                        <a href="#/games" style="color: var(--text-secondary); font-size: var(--font-sm);">&larr; Back to Games</a>
+                        <h1 class="mt-sm">${escapeHtml(game.name)}</h1>
+                        <p style="color: var(--text-secondary);">
+                            Status: <span class="status-badge status-${game.status}">${game.status}</span>
+                        </p>
+                    </div>
+                    ${isCreator && game.status === 'pending' ? `
+                        <div class="flex gap-sm">
+                            <button id="start-game-btn" class="btn btn-primary">Start Game</button>
+                            <button id="delete-game-btn" class="btn btn-secondary">Delete Game</button>
+                        </div>
+                    ` : ''}
+                </div>
+
+                <div class="card mt-xl">
+                    <h3>Players (${game.players.length}/${game.max_players})</h3>
+                    <div class="mt-md" id="players-list">
+                        ${game.players.map(p => `
+                            <div class="flex" style="justify-content: space-between; align-items: center; padding: var(--space-sm) 0; border-bottom: 1px solid var(--border-color);">
+                                <span>${escapeHtml(p.username)} ${p.is_creator ? '<span style="color: var(--accent-primary);">(Creator)</span>' : ''}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+
+                ${isCreator && game.status === 'pending' ? `
+                    <div class="card mt-lg">
+                        <h3>Invite Players</h3>
+                        <div class="mt-md">
+                            <div class="form-group">
+                                <label class="form-label" for="invite-username">Search by username</label>
+                                <input type="text" id="invite-username" class="form-input" placeholder="Type to search...">
+                                <div id="user-search-results" class="mt-sm"></div>
+                            </div>
+                        </div>
+
+                        ${invites.length > 0 ? `
+                            <h4 class="mt-lg">Pending Invites</h4>
+                            <div id="pending-invites" class="mt-md">
+                                ${invites.map(inv => `
+                                    <div class="flex" style="justify-content: space-between; align-items: center; padding: var(--space-sm) 0; border-bottom: 1px solid var(--border-color);">
+                                        <span>${escapeHtml(inv.invitee_username)}</span>
+                                        <button class="btn btn-secondary btn-sm withdraw-invite-btn" data-invite-id="${inv.id}">Withdraw</button>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                    </div>
+                ` : ''}
+            </div>
+        `;
+
+        // Event listeners for creator actions
+        if (isCreator && game.status === 'pending') {
+            // Start game
+            document.getElementById('start-game-btn')?.addEventListener('click', async () => {
+                if (!confirm('Are you sure you want to start this game?')) return;
+                const btn = document.getElementById('start-game-btn');
+                setButtonLoading(btn, true);
+                try {
+                    await api.post(`/games/${gameId}/start`);
+                    router.navigate(`/games/${gameId}`);
+                } catch (error) {
+                    showAlert(container.querySelector('.container'), error.message || 'Failed to start game', 'error');
+                    setButtonLoading(btn, false);
+                }
+            });
+
+            // Delete game
+            document.getElementById('delete-game-btn')?.addEventListener('click', async () => {
+                if (!confirm('Are you sure you want to delete this game? This cannot be undone.')) return;
+                const btn = document.getElementById('delete-game-btn');
+                setButtonLoading(btn, true);
+                try {
+                    await api.delete(`/games/${gameId}`);
+                    router.navigate('/games');
+                } catch (error) {
+                    showAlert(container.querySelector('.container'), error.message || 'Failed to delete game', 'error');
+                    setButtonLoading(btn, false);
+                }
+            });
+
+            // User search for invites
+            const searchInput = document.getElementById('invite-username');
+            const searchResults = document.getElementById('user-search-results');
+
+            const doSearch = debounce(async (query) => {
+                if (query.length < 2) {
+                    searchResults.innerHTML = '';
+                    return;
+                }
+                try {
+                    const users = await api.get(`/games/users/search?q=${encodeURIComponent(query)}`);
+                    if (users.length === 0) {
+                        searchResults.innerHTML = '<p style="color: var(--text-muted); font-size: var(--font-sm);">No users found</p>';
+                        return;
+                    }
+                    searchResults.innerHTML = users.map(u => `
+                        <div class="flex" style="justify-content: space-between; align-items: center; padding: var(--space-sm); background: var(--bg-tertiary); border-radius: var(--radius-md); margin-bottom: var(--space-xs);">
+                            <span>${escapeHtml(u.username)}</span>
+                            <button class="btn btn-primary btn-sm invite-user-btn" data-username="${escapeHtml(u.username)}">Invite</button>
+                        </div>
+                    `).join('');
+
+                    // Add invite button listeners
+                    searchResults.querySelectorAll('.invite-user-btn').forEach(btn => {
+                        btn.addEventListener('click', async () => {
+                            const username = btn.dataset.username;
+                            setButtonLoading(btn, true);
+                            try {
+                                await api.post(`/games/${gameId}/invites`, { username });
+                                searchInput.value = '';
+                                searchResults.innerHTML = '';
+                                // Reload page to show new invite
+                                await gameDetailPage(container, gameId);
+                            } catch (error) {
+                                showAlert(searchResults, error.message || 'Failed to send invite', 'error');
+                                setButtonLoading(btn, false);
+                            }
+                        });
+                    });
+                } catch (error) {
+                    searchResults.innerHTML = '<p style="color: var(--error);">Search failed</p>';
+                }
+            }, 300);
+
+            searchInput?.addEventListener('input', (e) => doSearch(e.target.value));
+
+            // Withdraw invite buttons
+            document.querySelectorAll('.withdraw-invite-btn').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                    const inviteId = btn.dataset.inviteId;
+                    setButtonLoading(btn, true);
+                    try {
+                        await api.delete(`/games/invites/${inviteId}`);
+                        await gameDetailPage(container, gameId);
+                    } catch (error) {
+                        showAlert(container.querySelector('.container'), error.message || 'Failed to withdraw invite', 'error');
+                        setButtonLoading(btn, false);
+                    }
+                });
+            });
+        }
+    } catch (error) {
+        container.innerHTML = `
+            <div class="container" style="padding-top: var(--space-xl);">
+                <div class="alert alert-error">Failed to load game. It may have been deleted.</div>
+                <a href="#/games" class="btn btn-secondary mt-lg">Back to Games</a>
+            </div>
+        `;
+    }
 }
 
 async function profilePage(container) {
@@ -465,12 +845,33 @@ async function initApp() {
     router.addRoute('/', welcomePage, { guestOnly: true });
     router.addRoute('/login', loginPage, { guestOnly: true });
     router.addRoute('/register', registerPage, { guestOnly: true });
-    router.addRoute('/dashboard', dashboardPage, { requiresAuth: true });
+    router.addRoute('/games', gamesPage, { requiresAuth: true });
+    router.addRoute('/games/new', newGamePage, { requiresAuth: true });
+    router.addRoute('/dashboard', gamesPage, { requiresAuth: true }); // Redirect dashboard to games
     router.addRoute('/profile', profilePage, { requiresAuth: true });
     router.addRoute('/change-password', changePasswordPage, { requiresAuth: true });
 
+    // Dynamic route for game detail pages
+    router.addDynamicRoute(/^\/games\/([a-f0-9-]+)$/, gameDetailPage, { requiresAuth: true });
+
+    // Dynamic route for game play
+    router.addDynamicRoute(/^\/games\/([a-f0-9-]+)\/play$/, gamePlayPage, { requiresAuth: true });
+
     // Start router
     router.start();
+}
+
+/**
+ * Game Play Page - launches the game session
+ */
+async function gamePlayPage(container, gameId) {
+    container.innerHTML = `
+        <div class="app-loading" style="min-height: 400px;">
+            <div class="spinner spinner-lg"></div>
+        </div>
+    `;
+
+    await startGameSession(gameId, container);
 }
 
 // Start app when DOM is ready

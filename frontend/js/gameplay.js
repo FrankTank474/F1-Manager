@@ -1,0 +1,1901 @@
+// Gameplay module for F1 Manager web version - Full Multiplayer Support
+import { api, ApiError } from './api.js';
+import { escapeHtml, formatDate, showAlert, setButtonLoading } from './utils.js';
+
+// Game phases
+const GamePhase = {
+    WAITING_FOR_PLAYERS: 'waiting_for_players',
+    SPONSOR_SELECTION: 'sponsor_selection',
+    TEAM_SETUP: 'team_setup',
+    MAIN_MENU: 'main_menu',
+    RACE_WEEKEND: 'race_weekend',
+    QUALIFYING: 'qualifying',
+    TIRE_SELECTION: 'tire_selection',
+    RACE_IN_PROGRESS: 'race_in_progress',
+    RACE_RESULTS: 'race_results',
+    SEASON_END: 'season_end'
+};
+
+let currentGameState = null;
+let raceSimulationInterval = null;
+let currentContainer = null;
+let refreshInterval = null;
+
+/**
+ * Render multiplayer status bar
+ */
+function renderMultiplayerStatus(state) {
+    if (!state.is_multiplayer) return '';
+
+    const players = state.players || [];
+    const currentPlayerId = state.turn_info?.current_player_id;
+    const isYourTurn = state.is_your_turn;
+
+    return `
+        <div class="multiplayer-status-bar">
+            <div class="players-status">
+                ${players.map(p => `
+                    <div class="player-badge ${p.player_id === state.your_player_id ? 'you' : 'opponent'} ${p.player_id === currentPlayerId ? 'active-turn' : ''}">
+                        <span class="player-name">${escapeHtml(p.username)}</span>
+                        ${p.is_ready ? '<span class="ready-badge">Ready</span>' : ''}
+                    </div>
+                `).join('')}
+            </div>
+            ${state.turn_info ? `
+                <div class="turn-indicator ${isYourTurn ? 'your-turn' : 'waiting'}">
+                    ${isYourTurn ? 'Your Turn' : `Waiting for ${escapeHtml(state.turn_info.current_player_username)}`}
+                </div>
+            ` : ''}
+        </div>
+    `;
+}
+
+/**
+ * Render game control buttons
+ */
+function renderGameControls(state) {
+    return `
+        <div class="game-controls-bar">
+            ${renderMultiplayerStatus(state)}
+            <button class="btn btn-danger btn-sm" id="stop-game-btn" title="Stop game and return to lobby">
+                Stop Game
+            </button>
+        </div>
+    `;
+}
+
+/**
+ * Attach game control event listeners
+ */
+function attachGameControlListeners(container, state) {
+    document.getElementById('stop-game-btn')?.addEventListener('click', async () => {
+        if (confirm('Stop this game? You can resume it later by clicking Play.')) {
+            stopRefreshInterval();
+            try {
+                await api.post(`/games/${state.game_id}/stop`);
+                window.location.hash = '#/games';
+            } catch (error) {
+                console.error('Failed to stop game:', error);
+                window.location.hash = '#/games';
+            }
+        }
+    });
+}
+
+/**
+ * Start auto-refresh for multiplayer waiting states
+ */
+function startRefreshInterval(gameId, container) {
+    stopRefreshInterval();
+    refreshInterval = setInterval(async () => {
+        try {
+            const state = await api.get(`/gameplay/${gameId}/state`);
+            if (state.phase !== currentGameState?.phase ||
+                JSON.stringify(state.players) !== JSON.stringify(currentGameState?.players) ||
+                state.turn_info?.current_player_id !== currentGameState?.turn_info?.current_player_id) {
+                renderGameScreen(container, state);
+            }
+        } catch (error) {
+            console.error('Refresh failed:', error);
+        }
+    }, 3000);
+}
+
+function stopRefreshInterval() {
+    if (refreshInterval) {
+        clearInterval(refreshInterval);
+        refreshInterval = null;
+    }
+}
+
+/**
+ * Start or resume a game session
+ */
+export async function startGameSession(gameId, container) {
+    currentContainer = container;
+    stopRefreshInterval();
+    try {
+        const state = await api.post(`/gameplay/${gameId}/start`);
+        currentGameState = state;
+        renderGameScreen(container, state);
+    } catch (error) {
+        container.innerHTML = `
+            <div class="container" style="padding-top: var(--space-xl);">
+                <div class="alert alert-error">Failed to start game: ${error.message}</div>
+                <a href="#/games" class="btn btn-secondary mt-lg">Back to Games</a>
+            </div>
+        `;
+    }
+}
+
+/**
+ * Render the appropriate game screen based on phase
+ */
+function renderGameScreen(container, state) {
+    currentGameState = state;
+    currentContainer = container;
+    stopRefreshInterval();
+
+    // Render screen based on phase
+    switch (state.phase) {
+        case GamePhase.WAITING_FOR_PLAYERS:
+            renderWaitingForPlayers(container, state);
+            startRefreshInterval(state.game_id, container);
+            break;
+        case GamePhase.SPONSOR_SELECTION:
+            renderSponsorSelection(container, state);
+            if (!state.players?.find(p => p.player_id === state.your_player_id)?.has_selected_sponsor) {
+                // Haven't selected yet
+            } else {
+                startRefreshInterval(state.game_id, container);
+            }
+            break;
+        case GamePhase.TEAM_SETUP:
+            renderDriverSelection(container, state);
+            if (!state.is_your_turn && state.is_multiplayer) {
+                startRefreshInterval(state.game_id, container);
+            }
+            break;
+        case GamePhase.MAIN_MENU:
+            renderMainMenu(container, state);
+            break;
+        case GamePhase.QUALIFYING:
+            renderQualifying(container, state);
+            break;
+        case GamePhase.TIRE_SELECTION:
+            renderTireSelection(container, state);
+            break;
+        case GamePhase.RACE_IN_PROGRESS:
+            renderRaceInProgress(container, state);
+            break;
+        case GamePhase.RACE_RESULTS:
+            renderRaceResults(container, state);
+            break;
+        case GamePhase.SEASON_END:
+            renderSeasonEnd(container, state);
+            break;
+        default:
+            renderMainMenu(container, state);
+    }
+
+    // Add game controls bar after content is rendered
+    const gameContainer = container.querySelector('.game-container');
+    if (gameContainer) {
+        gameContainer.insertAdjacentHTML('afterbegin', renderGameControls(state));
+        attachGameControlListeners(container, state);
+    }
+}
+
+/**
+ * Waiting for Players Screen (Multiplayer)
+ */
+function renderWaitingForPlayers(container, state) {
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header text-center">
+                <h1>Waiting for Players</h1>
+                <p class="text-secondary">Share the game link with another player to start</p>
+            </div>
+
+            <div class="game-content text-center">
+                <div class="card">
+                    <div class="waiting-animation">
+                        <div class="spinner"></div>
+                    </div>
+                    <h3>Players: ${state.player_count}/2</h3>
+                    <div class="players-list mt-lg">
+                        ${state.players?.map(p => `
+                            <div class="player-card ${p.player_id === state.your_player_id ? 'you' : ''}">
+                                <span class="player-name">${escapeHtml(p.username)}</span>
+                                <span class="player-team">${escapeHtml(p.team_name)}</span>
+                            </div>
+                        `).join('') || '<p>No players yet</p>'}
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Sponsor Selection Screen
+ */
+function renderSponsorSelection(container, state) {
+    const myPlayer = state.players?.find(p => p.player_id === state.your_player_id);
+    const hasSelected = myPlayer?.has_selected_sponsor;
+
+    if (hasSelected) {
+        container.innerHTML = `
+            <div class="game-container">
+                <div class="game-header text-center">
+                    <h1>Sponsor Selected!</h1>
+                    <p class="text-secondary">Waiting for other player to select their sponsor...</p>
+                </div>
+                <div class="game-content text-center">
+                    <div class="card">
+                        <div class="waiting-animation">
+                            <div class="spinner"></div>
+                        </div>
+                        <h3>Your sponsor: ${escapeHtml(state.player_team?.sponsor?.name || 'Selected')}</h3>
+                    </div>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
+    const sponsors = state.available_sponsors || [];
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <h1>Select Your Sponsor</h1>
+                <p class="text-secondary">Choose a sponsor to fund your team. Higher tiers have tougher objectives but bigger rewards.</p>
+            </div>
+
+            <div class="game-content">
+                <div class="sponsors-grid">
+                    ${sponsors.map(sponsor => `
+                        <div class="card sponsor-card sponsor-${sponsor.tier}" data-sponsor-id="${sponsor.id}">
+                            <div class="sponsor-tier">${sponsor.tier.toUpperCase()}</div>
+                            <h3>${escapeHtml(sponsor.name)}</h3>
+                            <div class="sponsor-details">
+                                <div class="sponsor-stat">
+                                    <span class="label">Per Race</span>
+                                    <span class="value">$${sponsor.payment_per_race.toFixed(1)}M</span>
+                                </div>
+                                <div class="sponsor-stat">
+                                    <span class="label">Season Bonus</span>
+                                    <span class="value">$${sponsor.season_bonus.toFixed(0)}M</span>
+                                </div>
+                            </div>
+                            <div class="sponsor-objective">
+                                <strong>Objective:</strong>
+                                <p>${escapeHtml(sponsor.objective?.description || 'Meet performance targets')}</p>
+                            </div>
+                            <button class="btn btn-primary btn-block select-sponsor-btn" data-sponsor-id="${sponsor.id}">
+                                Select ${escapeHtml(sponsor.name)}
+                            </button>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Event listeners
+    container.querySelectorAll('.select-sponsor-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const sponsorId = btn.dataset.sponsorId;
+            setButtonLoading(btn, true);
+            try {
+                const newState = await api.post(`/gameplay/${state.game_id}/select-sponsor`, {
+                    sponsor_id: sponsorId
+                });
+                renderGameScreen(container, newState);
+            } catch (error) {
+                showAlert(container.querySelector('.game-content'), error.message, 'error');
+                setButtonLoading(btn, false);
+            }
+        });
+    });
+}
+
+/**
+ * Driver Selection Screen (Team Setup) with Turn-Based Support
+ */
+function renderDriverSelection(container, state) {
+    const teamDriverCount = state.player_team?.drivers?.length || 0;
+    const driversNeeded = 2 - teamDriverCount;
+    const isYourTurn = state.is_your_turn;
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <h1>Team Setup</h1>
+                <p class="text-secondary">Sign ${driversNeeded} driver${driversNeeded !== 1 ? 's' : ''} to complete your team</p>
+            </div>
+
+            <div class="game-content">
+                ${!isYourTurn && state.is_multiplayer ? `
+                    <div class="alert alert-info mb-lg">
+                        Waiting for ${escapeHtml(state.turn_info?.current_player_username || 'other player')} to make their pick...
+                    </div>
+                ` : ''}
+
+                <div class="card mb-lg">
+                    <div class="flex" style="justify-content: space-between; align-items: center;">
+                        <h3>${escapeHtml(state.player_team?.name || 'Your Team')}</h3>
+                        <span class="stat-pill" style="font-size: var(--font-lg);">Budget: <strong>$${state.player_team?.budget?.toFixed(1) || 0}M</strong></span>
+                    </div>
+                    ${state.player_team?.drivers?.length > 0 ? `
+                        <div class="mt-md">
+                            <h4>Signed Drivers:</h4>
+                            ${state.player_team.drivers.map(d => `
+                                <div class="driver-card-mini">
+                                    <span class="driver-name">${escapeHtml(d.name)}</span>
+                                    <span class="driver-rating">OVR: ${calculateOverall(d.stats)}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    ` : ''}
+                </div>
+
+                ${state.opponent_team ? `
+                    <div class="card mb-lg opponent-card">
+                        <h4>Opponent: ${escapeHtml(state.opponent_team.name)}</h4>
+                        <p>Drivers: ${state.opponent_team.drivers?.map(d => escapeHtml(d.name)).join(', ') || 'None signed'}</p>
+                    </div>
+                ` : ''}
+
+                <h3>Available Drivers (${state.market_drivers?.length || 0})</h3>
+                <div class="card mt-md">
+                    <div style="overflow-x: auto;">
+                        <table class="driver-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Age</th>
+                                    <th>Nat</th>
+                                    <th>OVR</th>
+                                    <th>POT</th>
+                                    <th>PAC</th>
+                                    <th>OVT</th>
+                                    <th>DEF</th>
+                                    <th>CON</th>
+                                    <th>TIR</th>
+                                    <th>WET</th>
+                                    <th>Value</th>
+                                    <th>Salary</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${state.market_drivers?.map((driver, idx) => {
+                                    const budget = state.player_team?.budget || 0;
+                                    const minCost = state.min_driver_cost || 0;
+                                    const driversNeeded = state.drivers_needed || 2;
+                                    const cantAfford = driver.market_value > budget;
+                                    const wouldLeaveShort = driversNeeded > 1 && (budget - driver.market_value) < minCost;
+                                    const isUnaffordable = cantAfford || wouldLeaveShort;
+                                    const cannotSign = !isYourTurn || isUnaffordable;
+
+                                    return `<tr class="${isUnaffordable ? 'unaffordable' : ''}">
+                                        <td><strong>${escapeHtml(driver.name)}</strong></td>
+                                        <td>${driver.age}</td>
+                                        <td>${escapeHtml(driver.nationality.substring(0, 3).toUpperCase())}</td>
+                                        <td><span class="stat-badge">${calculateOverall(driver.stats)}</span></td>
+                                        <td><span class="stat-badge potential">${driver.potential}</span></td>
+                                        <td>${driver.stats.pace}</td>
+                                        <td>${driver.stats.overtaking}</td>
+                                        <td>${driver.stats.defending}</td>
+                                        <td>${driver.stats.consistency}</td>
+                                        <td>${driver.stats.tire_management}</td>
+                                        <td>${driver.stats.wet_skill}</td>
+                                        <td class="price-tag">$${driver.market_value?.toFixed(1)}M</td>
+                                        <td>$${driver.salary?.toFixed(1)}M</td>
+                                        <td>
+                                            <button class="btn ${cannotSign ? 'btn-secondary' : 'btn-primary'} btn-sm sign-driver-btn"
+                                                    data-driver-id="${driver.id}"
+                                                    data-driver-name="${escapeHtml(driver.name)}"
+                                                    data-salary="${driver.salary}"
+                                                    data-value="${driver.market_value}"
+                                                    ${cannotSign ? 'disabled' : ''}
+                                                    title="${!isYourTurn ? 'Not your turn' : cantAfford ? 'Cannot afford' : wouldLeaveShort ? 'Not enough left for 2nd driver' : 'Sign driver'}">
+                                                ${!isYourTurn ? 'Wait' : cantAfford ? 'Too $$$' : wouldLeaveShort ? 'Need 2' : 'Sign'}
+                                            </button>
+                                        </td>
+                                    </tr>`;
+                                }).join('') || '<tr><td colspan="14">No drivers available</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Add event listeners for signing drivers
+    container.querySelectorAll('.sign-driver-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const driverId = btn.dataset.driverId;
+            const driverName = btn.dataset.driverName;
+            const salary = parseFloat(btn.dataset.salary);
+
+            if (confirm(`Sign ${driverName} for $${salary.toFixed(1)}M/year?`)) {
+                setButtonLoading(btn, true);
+                try {
+                    const newState = await api.post(`/gameplay/${state.game_id}/sign-driver`, {
+                        driver_id: driverId,
+                        salary: salary,
+                        years: 2,
+                        is_number_one: (state.player_team?.drivers?.length || 0) === 0
+                    });
+                    renderGameScreen(container, newState);
+                } catch (error) {
+                    showAlert(container.querySelector('.game-content'), error.message, 'error');
+                    setButtonLoading(btn, false);
+                }
+            }
+        });
+    });
+}
+
+/**
+ * Main Menu Screen - Team Hub
+ */
+function renderMainMenu(container, state) {
+    const track = state.current_track;
+    const team = state.player_team;
+    const car = team?.car;
+    const drivers = team?.drivers || [];
+    const isMultiplayer = state.is_multiplayer;
+    const myPlayer = state.players?.find(p => p.player_id === state.your_player_id);
+    const otherPlayer = state.players?.find(p => p.player_id !== state.your_player_id);
+    const imReady = myPlayer?.is_ready;
+    const opponentReady = otherPlayer?.is_ready;
+    const bothReady = isMultiplayer ? (imReady && opponentReady) : true;
+
+    // Calculate car overall
+    const carOverall = car ? Math.round(
+        (car.downforce || 0) * 0.18 +
+        (car.aero_efficiency || 0) * 0.18 +
+        (car.chassis || 0) * 0.22 +
+        (car.power_unit || 0) * 0.18 +
+        (car.reliability || 0) * 0.12 +
+        (car.tire_cooling || 0) * 0.12
+    ) : 0;
+
+    container.innerHTML = `
+        <div class="game-container hub-container">
+            <!-- Team Header -->
+            <div class="hub-header">
+                <div class="hub-team-info">
+                    <h1 class="hub-team-name">${escapeHtml(team?.name || 'Your Team')}</h1>
+                    <div class="hub-season-info">
+                        <span class="season-badge">Season ${state.current_season}</span>
+                        <span class="race-progress">Race ${state.current_race} / ${state.total_races}</span>
+                    </div>
+                </div>
+                <div class="hub-stats">
+                    <div class="hub-stat">
+                        <span class="hub-stat-value">$${team?.budget?.toFixed(1) || 0}M</span>
+                        <span class="hub-stat-label">Budget</span>
+                    </div>
+                    <div class="hub-stat">
+                        <span class="hub-stat-value">${team?.season_points || 0}</span>
+                        <span class="hub-stat-label">Points</span>
+                    </div>
+                    <div class="hub-stat">
+                        <span class="hub-stat-value">${team?.race_wins || 0}</span>
+                        <span class="hub-stat-label">Wins</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="hub-content">
+                <!-- Main Hub Grid -->
+                <div class="hub-grid">
+                    <!-- Left Column: Drivers & Car -->
+                    <div class="hub-left">
+                        <!-- Drivers Section -->
+                        <div class="hub-section">
+                            <h3 class="hub-section-title">Drivers</h3>
+                            <div class="hub-drivers">
+                                ${drivers.map((driver, idx) => `
+                                    <div class="hub-driver-card">
+                                        <div class="hub-driver-number">${idx + 1}</div>
+                                        <div class="hub-driver-info">
+                                            <span class="hub-driver-name">${escapeHtml(driver.name)}</span>
+                                            <span class="hub-driver-stats">
+                                                OVR ${calculateOverall(driver.stats)} |
+                                                ${driver.season_points || 0} pts
+                                            </span>
+                                        </div>
+                                        <div class="hub-driver-morale" title="Morale: ${driver.morale || 75}%">
+                                            <div class="mini-morale-bar">
+                                                <div class="mini-morale-fill" style="width: ${driver.morale || 75}%; background: ${getMoraleColor(driver.morale || 75)}"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+
+                        <!-- Car Section -->
+                        <div class="hub-section">
+                            <div class="hub-section-header">
+                                <h3 class="hub-section-title">Car Performance</h3>
+                                <span class="car-overall-badge">OVR ${carOverall}</span>
+                            </div>
+                            <div class="hub-car-stats">
+                                <div class="hub-car-stat">
+                                    <span class="car-stat-name">Downforce</span>
+                                    <div class="car-stat-bar"><div class="car-stat-fill" style="width: ${car?.downforce || 0}%"></div></div>
+                                    <span class="car-stat-val">${car?.downforce || 0}</span>
+                                </div>
+                                <div class="hub-car-stat">
+                                    <span class="car-stat-name">Aero</span>
+                                    <div class="car-stat-bar"><div class="car-stat-fill" style="width: ${car?.aero_efficiency || 0}%"></div></div>
+                                    <span class="car-stat-val">${car?.aero_efficiency || 0}</span>
+                                </div>
+                                <div class="hub-car-stat">
+                                    <span class="car-stat-name">Chassis</span>
+                                    <div class="car-stat-bar"><div class="car-stat-fill" style="width: ${car?.chassis || 0}%"></div></div>
+                                    <span class="car-stat-val">${car?.chassis || 0}</span>
+                                </div>
+                                <div class="hub-car-stat">
+                                    <span class="car-stat-name">Power</span>
+                                    <div class="car-stat-bar"><div class="car-stat-fill" style="width: ${car?.power_unit || 0}%"></div></div>
+                                    <span class="car-stat-val">${car?.power_unit || 0}</span>
+                                </div>
+                                <div class="hub-car-stat">
+                                    <span class="car-stat-name">Reliability</span>
+                                    <div class="car-stat-bar"><div class="car-stat-fill" style="width: ${car?.reliability || 0}%"></div></div>
+                                    <span class="car-stat-val">${car?.reliability || 0}</span>
+                                </div>
+                            </div>
+                            <button class="btn btn-secondary btn-block mt-md" id="upgrades-btn">
+                                Upgrade Car
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Right Column: Race & Navigation -->
+                    <div class="hub-right">
+                        <!-- Next Race Card -->
+                        ${track ? `
+                            <div class="hub-race-card">
+                                <div class="race-card-header">
+                                    <span class="race-round">Round ${state.current_race}</span>
+                                    <span class="race-flag">${getCountryFlag(track.country)}</span>
+                                </div>
+                                <h2 class="race-track-name">${escapeHtml(track.name)}</h2>
+                                <p class="race-location">${escapeHtml(track.city)}, ${escapeHtml(track.country)}</p>
+
+                                <div class="race-details">
+                                    <div class="race-detail">
+                                        <span class="detail-value">${track.laps}</span>
+                                        <span class="detail-label">Laps</span>
+                                    </div>
+                                    <div class="race-detail">
+                                        <span class="detail-value">${track.track_type.replace('_', ' ')}</span>
+                                        <span class="detail-label">Type</span>
+                                    </div>
+                                    <div class="race-detail">
+                                        <span class="detail-value">${(track.tire_degradation * 100).toFixed(0)}%</span>
+                                        <span class="detail-label">Tire Wear</span>
+                                    </div>
+                                </div>
+
+                                ${isMultiplayer ? `
+                                    <div class="ready-status">
+                                        <div class="ready-player ${imReady ? 'is-ready' : ''}">
+                                            <span class="ready-name">You</span>
+                                            <span class="ready-indicator">${imReady ? 'READY' : 'NOT READY'}</span>
+                                        </div>
+                                        <div class="ready-player ${opponentReady ? 'is-ready' : ''}">
+                                            <span class="ready-name">${escapeHtml(otherPlayer?.username || 'Opponent')}</span>
+                                            <span class="ready-indicator">${opponentReady ? 'READY' : 'NOT READY'}</span>
+                                        </div>
+                                    </div>
+                                    ${!imReady ? `
+                                        <button class="btn btn-success btn-lg btn-block" id="ready-btn">
+                                            Ready for Race Weekend
+                                        </button>
+                                    ` : bothReady ? `
+                                        <button class="btn btn-primary btn-lg btn-block" id="start-race-btn">
+                                            Start Race Weekend
+                                        </button>
+                                    ` : `
+                                        <div class="waiting-opponent">
+                                            <div class="spinner-small"></div>
+                                            <span>Waiting for ${escapeHtml(otherPlayer?.username || 'opponent')}...</span>
+                                        </div>
+                                    `}
+                                ` : `
+                                    <button class="btn btn-primary btn-lg btn-block" id="start-race-btn">
+                                        Start Race Weekend
+                                    </button>
+                                `}
+                            </div>
+                        ` : ''}
+
+                        <!-- Quick Nav -->
+                        <div class="hub-nav">
+                            <button class="hub-nav-btn" id="standings-btn">
+                                <span class="nav-icon">🏆</span>
+                                <span class="nav-label">Standings</span>
+                            </button>
+                            <button class="hub-nav-btn" id="calendar-btn">
+                                <span class="nav-icon">📅</span>
+                                <span class="nav-label">Calendar</span>
+                            </button>
+                            <button class="hub-nav-btn" id="team-btn">
+                                <span class="nav-icon">👥</span>
+                                <span class="nav-label">Team Info</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Event listeners
+    document.getElementById('ready-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('ready-btn');
+        setButtonLoading(btn, true);
+        try {
+            const newState = await api.post(`/gameplay/${state.game_id}/ready`, { ready: true });
+            renderGameScreen(container, newState);
+        } catch (error) {
+            showAlert(container.querySelector('.hub-content'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
+
+    document.getElementById('start-race-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('start-race-btn');
+        setButtonLoading(btn, true);
+        try {
+            const newState = await api.post(`/gameplay/${state.game_id}/start-race-weekend`);
+            renderGameScreen(container, newState);
+        } catch (error) {
+            showAlert(container.querySelector('.hub-content'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
+
+    document.getElementById('team-btn')?.addEventListener('click', () => renderTeamScreen(container, state));
+    document.getElementById('upgrades-btn')?.addEventListener('click', () => renderUpgradesScreen(container, state));
+    document.getElementById('standings-btn')?.addEventListener('click', () => renderStandingsScreen(container, state));
+    document.getElementById('calendar-btn')?.addEventListener('click', () => renderCalendarScreen(container, state));
+
+    // Auto-refresh in multiplayer when waiting for opponent
+    if (isMultiplayer && imReady && !opponentReady) {
+        startRefreshInterval(state.game_id, container);
+    }
+}
+
+function getCountryFlag(country) {
+    const flags = {
+        'Bahrain': '🇧🇭', 'Saudi Arabia': '🇸🇦', 'Australia': '🇦🇺', 'Japan': '🇯🇵',
+        'China': '🇨🇳', 'USA': '🇺🇸', 'Italy': '🇮🇹', 'Monaco': '🇲🇨', 'Canada': '🇨🇦',
+        'Spain': '🇪🇸', 'Austria': '🇦🇹', 'UK': '🇬🇧', 'Hungary': '🇭🇺', 'Belgium': '🇧🇪',
+        'Netherlands': '🇳🇱', 'Singapore': '🇸🇬', 'Mexico': '🇲🇽', 'Brazil': '🇧🇷',
+        'Qatar': '🇶🇦', 'UAE': '🇦🇪', 'Azerbaijan': '🇦🇿'
+    };
+    return flags[country] || '🏁';
+}
+
+/**
+ * Car Upgrades Screen
+ */
+function renderUpgradesScreen(container, state) {
+    const upgrades = state.upgrade_options || [];
+    const budget = state.player_team?.budget || 0;
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <button class="btn btn-secondary" id="back-btn">Back</button>
+                <h1>Car Upgrades</h1>
+                <span class="stat-pill">Budget: $${budget.toFixed(1)}M</span>
+            </div>
+
+            <div class="game-content">
+                <p class="text-secondary mb-lg">Upgrade individual car stats. Cost increases with stat value.</p>
+
+                <div class="upgrades-grid">
+                    ${upgrades.map(upgrade => `
+                        <div class="card upgrade-card ${!upgrade.can_afford ? 'unaffordable' : ''}">
+                            <h4>${escapeHtml(upgrade.display_name)}</h4>
+                            <div class="upgrade-stat">
+                                <div class="stat-bar-container">
+                                    <div class="stat-bar" style="width: ${upgrade.current_value}%"></div>
+                                </div>
+                                <span class="stat-value">${upgrade.current_value} -> ${upgrade.new_value}</span>
+                            </div>
+                            <div class="upgrade-cost">
+                                Cost: $${upgrade.upgrade_cost.toFixed(1)}M
+                            </div>
+                            <button class="btn ${upgrade.can_afford ? 'btn-primary' : 'btn-secondary'} btn-block upgrade-btn"
+                                    data-stat="${upgrade.stat_name}"
+                                    ${!upgrade.can_afford ? 'disabled' : ''}>
+                                ${upgrade.can_afford ? 'Upgrade' : 'Not Enough Budget'}
+                            </button>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('back-btn')?.addEventListener('click', () => renderMainMenu(container, state));
+
+    container.querySelectorAll('.upgrade-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const statName = btn.dataset.stat;
+            setButtonLoading(btn, true);
+            try {
+                const newState = await api.post(`/gameplay/${state.game_id}/upgrade-car`, {
+                    stat_name: statName,
+                    points: 1
+                });
+                renderUpgradesScreen(container, newState);
+            } catch (error) {
+                showAlert(container.querySelector('.game-content'), error.message, 'error');
+                setButtonLoading(btn, false);
+            }
+        });
+    });
+}
+
+/**
+ * Development Tree Screen
+ */
+function renderDevelopmentScreen(container, state) {
+    const tree = state.development_tree;
+    const budget = state.player_team?.budget || 0;
+
+    if (!tree) {
+        container.innerHTML = `
+            <div class="game-container">
+                <div class="game-header">
+                    <button class="btn btn-secondary" id="back-btn">Back</button>
+                    <h1>Development Tree</h1>
+                </div>
+                <div class="game-content">
+                    <p>Development tree not available.</p>
+                </div>
+            </div>
+        `;
+        document.getElementById('back-btn')?.addEventListener('click', () => renderMainMenu(container, state));
+        return;
+    }
+
+    const categories = ['aerodynamics', 'power_unit', 'chassis', 'tire_management'];
+    const categoryNames = {
+        aerodynamics: 'Aerodynamics',
+        power_unit: 'Power Unit',
+        chassis: 'Chassis',
+        tire_management: 'Tire Management'
+    };
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <button class="btn btn-secondary" id="back-btn">Back</button>
+                <h1>Development Tree</h1>
+                <span class="stat-pill">Budget: $${budget.toFixed(1)}M</span>
+            </div>
+
+            <div class="game-content">
+                <p class="text-secondary mb-md">Active developments: ${tree.active_developments?.length || 0}/2</p>
+
+                <div class="dev-tabs">
+                    ${categories.map((cat, i) => `
+                        <button class="tab-btn ${i === 0 ? 'active' : ''}" data-category="${cat}">
+                            ${categoryNames[cat]}
+                        </button>
+                    `).join('')}
+                </div>
+
+                ${categories.map((cat, i) => `
+                    <div class="dev-category" id="cat-${cat}" style="display: ${i === 0 ? 'block' : 'none'}">
+                        <div class="dev-nodes-grid">
+                            ${tree.nodes?.filter(n => n.category === cat).map(node => {
+                                const isCompleted = tree.completed_developments?.includes(node.id);
+                                const isActive = tree.active_developments?.includes(node.id);
+                                const isLocked = node.is_locked;
+                                const prereqsMet = node.prerequisites.every(p => tree.completed_developments?.includes(p));
+                                const canStart = !isCompleted && !isActive && !isLocked && prereqsMet &&
+                                                tree.active_developments?.length < 2 && budget >= node.cost;
+
+                                let statusClass = '';
+                                let statusText = '';
+                                if (isCompleted) { statusClass = 'completed'; statusText = 'Completed'; }
+                                else if (isActive) { statusClass = 'in-progress'; statusText = `${node.races_remaining} races left`; }
+                                else if (isLocked) { statusClass = 'locked'; statusText = 'Locked'; }
+                                else if (!prereqsMet) { statusClass = 'locked'; statusText = 'Prerequisites needed'; }
+
+                                return `
+                                    <div class="card dev-node ${statusClass}">
+                                        <div class="dev-node-branch">${node.branch}</div>
+                                        <h4>${escapeHtml(node.name)}</h4>
+                                        <p class="dev-description">${escapeHtml(node.description)}</p>
+                                        <div class="dev-effects">
+                                            ${Object.entries(node.effects || {}).map(([stat, val]) => `
+                                                <span class="effect ${val > 0 ? 'positive' : 'negative'}">
+                                                    ${stat.replace('_', ' ')}: ${val > 0 ? '+' : ''}${val}
+                                                </span>
+                                            `).join('')}
+                                        </div>
+                                        <div class="dev-meta">
+                                            <span>Cost: $${node.cost}M</span>
+                                            <span>Time: ${node.development_time} races</span>
+                                        </div>
+                                        ${statusText ? `<div class="dev-status">${statusText}</div>` : ''}
+                                        ${canStart ? `
+                                            <button class="btn btn-primary btn-sm btn-block start-dev-btn" data-node-id="${node.id}">
+                                                Start Research
+                                            </button>
+                                        ` : ''}
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `;
+
+    document.getElementById('back-btn')?.addEventListener('click', () => renderMainMenu(container, state));
+
+    // Tab switching
+    container.querySelectorAll('.tab-btn[data-category]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            container.querySelectorAll('.tab-btn[data-category]').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const cat = btn.dataset.category;
+            categories.forEach(c => {
+                document.getElementById(`cat-${c}`).style.display = c === cat ? 'block' : 'none';
+            });
+        });
+    });
+
+    // Start development
+    container.querySelectorAll('.start-dev-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const nodeId = btn.dataset.nodeId;
+            setButtonLoading(btn, true);
+            try {
+                const newState = await api.post(`/gameplay/${state.game_id}/start-development`, {
+                    node_id: nodeId
+                });
+                renderDevelopmentScreen(container, newState);
+            } catch (error) {
+                showAlert(container.querySelector('.game-content'), error.message, 'error');
+                setButtonLoading(btn, false);
+            }
+        });
+    });
+}
+
+/**
+ * Inbox Screen
+ */
+function renderInboxScreen(container, state) {
+    const messages = state.inbox || [];
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <button class="btn btn-secondary" id="back-btn">Back</button>
+                <h1>Inbox</h1>
+            </div>
+
+            <div class="game-content">
+                ${messages.length === 0 ? '<p class="text-muted">No messages</p>' : ''}
+                <div class="inbox-list">
+                    ${messages.map(msg => `
+                        <div class="card inbox-message ${msg.is_read ? 'read' : 'unread'} priority-${msg.priority}">
+                            <div class="message-header">
+                                <span class="message-type">${msg.type.replace('_', ' ')}</span>
+                                <span class="message-time">${formatMessageTime(msg.timestamp)}</span>
+                            </div>
+                            <h4 class="message-subject">${escapeHtml(msg.subject)}</h4>
+                            <p class="message-body">${escapeHtml(msg.body)}</p>
+                            <div class="message-footer">
+                                <span class="message-sender">From: ${escapeHtml(msg.sender)}</span>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('back-btn')?.addEventListener('click', () => renderMainMenu(container, state));
+}
+
+function formatMessageTime(timestamp) {
+    try {
+        const date = new Date(timestamp);
+        return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+    } catch {
+        return timestamp;
+    }
+}
+
+/**
+ * Qualifying Screen - With sync for multiplayer
+ */
+function renderQualifying(container, state) {
+    const isMultiplayer = state.is_multiplayer;
+    const myPlayer = state.players?.find(p => p.player_id === state.your_player_id);
+    const otherPlayer = state.players?.find(p => p.player_id !== state.your_player_id);
+    const imReady = myPlayer?.is_ready;
+    const opponentReady = otherPlayer?.is_ready;
+    const bothReady = isMultiplayer ? (imReady && opponentReady) : true;
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <h1>Qualifying Results</h1>
+                <p class="text-secondary">${escapeHtml(state.current_track?.name || 'Unknown Track')}</p>
+            </div>
+
+            <div class="game-content">
+                <div class="card">
+                    <table class="results-table">
+                        <thead>
+                            <tr>
+                                <th>Pos</th>
+                                <th>Driver</th>
+                                <th>Team</th>
+                                <th>Time</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${state.qualifying_results?.map(result => `
+                                <tr class="${result.is_player_driver ? 'player-row' : ''} ${result.player_id === state.your_player_id ? 'your-driver' : ''}">
+                                    <td class="pos-cell">${result.position}</td>
+                                    <td>${escapeHtml(result.driver_name)}</td>
+                                    <td>${escapeHtml(result.team_name)}</td>
+                                    <td class="time-cell">${result.lap_time}</td>
+                                </tr>
+                            `).join('') || '<tr><td colspan="4">No results</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+
+                ${isMultiplayer ? `
+                    <div class="sync-status mt-xl">
+                        <div class="sync-player ${imReady ? 'is-ready' : ''}">
+                            <span class="sync-name">You</span>
+                            <span class="sync-indicator">${imReady ? 'Ready' : 'Reviewing'}</span>
+                        </div>
+                        <div class="sync-player ${opponentReady ? 'is-ready' : ''}">
+                            <span class="sync-name">${escapeHtml(otherPlayer?.username || 'Opponent')}</span>
+                            <span class="sync-indicator">${opponentReady ? 'Ready' : 'Reviewing'}</span>
+                        </div>
+                    </div>
+                    ${!imReady ? `
+                        <button class="btn btn-success btn-lg btn-block mt-lg" id="ready-btn">
+                            Ready for Tire Selection
+                        </button>
+                    ` : bothReady ? `
+                        <button class="btn btn-primary btn-lg btn-block mt-lg" id="continue-btn">
+                            Continue to Tire Selection
+                        </button>
+                    ` : `
+                        <div class="waiting-sync mt-lg">
+                            <div class="spinner-small"></div>
+                            <span>Waiting for ${escapeHtml(otherPlayer?.username || 'opponent')}...</span>
+                        </div>
+                    `}
+                ` : `
+                    <button class="btn btn-primary btn-lg btn-block mt-xl" id="continue-btn">
+                        Continue to Tire Selection
+                    </button>
+                `}
+            </div>
+        </div>
+    `;
+
+    document.getElementById('ready-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('ready-btn');
+        setButtonLoading(btn, true);
+        try {
+            const newState = await api.post(`/gameplay/${state.game_id}/ready`, { ready: true });
+            renderGameScreen(container, newState);
+        } catch (error) {
+            showAlert(container.querySelector('.game-content'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
+
+    document.getElementById('continue-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('continue-btn');
+        setButtonLoading(btn, true);
+        try {
+            const newState = await api.post(`/gameplay/${state.game_id}/advance-to-tire-selection`);
+            renderGameScreen(container, newState);
+        } catch (error) {
+            showAlert(container.querySelector('.game-content'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
+
+    // Auto-refresh when waiting for opponent
+    if (isMultiplayer && imReady && !opponentReady) {
+        startRefreshInterval(state.game_id, container);
+    }
+}
+
+/**
+ * Tire Selection Screen - With sync for multiplayer
+ */
+function renderTireSelection(container, state) {
+    const drivers = state.player_team?.drivers || [];
+    const isMultiplayer = state.is_multiplayer;
+    const myPlayer = state.players?.find(p => p.player_id === state.your_player_id);
+    const otherPlayer = state.players?.find(p => p.player_id !== state.your_player_id);
+    const imReady = myPlayer?.has_selected_tires;
+    const opponentReady = otherPlayer?.has_selected_tires;
+    const bothReady = isMultiplayer ? (imReady && opponentReady) : true;
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <h1>Select Starting Tires</h1>
+                <p class="text-secondary">${escapeHtml(state.current_track?.name || 'Unknown Track')}</p>
+            </div>
+
+            <div class="game-content">
+                ${!imReady ? `
+                    <div class="tire-selection-grid">
+                        ${drivers.map((driver, idx) => `
+                            <div class="card tire-selection-card" data-driver-id="${driver.id}">
+                                <h3>${escapeHtml(driver.name)}</h3>
+                                <p class="text-secondary">Grid Position: ${getDriverQualifyingPosition(state, driver.name)}</p>
+
+                                <div class="tire-options mt-lg">
+                                    <button class="tire-btn tire-soft selected" data-compound="soft">
+                                        <span class="tire-icon">S</span>
+                                        <span class="tire-name">Soft</span>
+                                        <span class="tire-desc">Fast but wears quickly</span>
+                                    </button>
+                                    <button class="tire-btn tire-medium" data-compound="medium">
+                                        <span class="tire-icon">M</span>
+                                        <span class="tire-name">Medium</span>
+                                        <span class="tire-desc">Balanced performance</span>
+                                    </button>
+                                    <button class="tire-btn tire-hard" data-compound="hard">
+                                        <span class="tire-icon">H</span>
+                                        <span class="tire-name">Hard</span>
+                                        <span class="tire-desc">Durable but slower</span>
+                                    </button>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+
+                    <button class="btn btn-success btn-lg btn-block mt-xl" id="confirm-tires-btn">
+                        Confirm Tire Selection
+                    </button>
+                ` : `
+                    <div class="tires-confirmed card text-center">
+                        <h3>Tires Selected!</h3>
+                        <p class="text-secondary">Your starting tire choices have been locked in.</p>
+                    </div>
+                `}
+
+                ${isMultiplayer ? `
+                    <div class="sync-status mt-xl">
+                        <div class="sync-player ${imReady ? 'is-ready' : ''}">
+                            <span class="sync-name">You</span>
+                            <span class="sync-indicator">${imReady ? 'Tires Set' : 'Selecting'}</span>
+                        </div>
+                        <div class="sync-player ${opponentReady ? 'is-ready' : ''}">
+                            <span class="sync-name">${escapeHtml(otherPlayer?.username || 'Opponent')}</span>
+                            <span class="sync-indicator">${opponentReady ? 'Tires Set' : 'Selecting'}</span>
+                        </div>
+                    </div>
+                    ${imReady && !bothReady ? `
+                        <div class="waiting-sync mt-lg">
+                            <div class="spinner-small"></div>
+                            <span>Waiting for ${escapeHtml(otherPlayer?.username || 'opponent')} to select tires...</span>
+                        </div>
+                    ` : ''}
+                ` : ''}
+            </div>
+        </div>
+    `;
+
+    // Tire selection handlers
+    container.querySelectorAll('.tire-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const card = btn.closest('.tire-selection-card');
+            card.querySelectorAll('.tire-btn').forEach(b => b.classList.remove('selected'));
+            btn.classList.add('selected');
+        });
+    });
+
+    // Confirm tires handler
+    document.getElementById('confirm-tires-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('confirm-tires-btn');
+        setButtonLoading(btn, true);
+
+        try {
+            // Submit tire selections for each driver
+            for (const driver of drivers) {
+                const card = container.querySelector(`[data-driver-id="${driver.id}"]`);
+                const selectedTire = card?.querySelector('.tire-btn.selected');
+                const compound = selectedTire?.dataset.compound || 'medium';
+
+                await api.post(`/gameplay/${state.game_id}/select-tire`, {
+                    driver_id: driver.id,
+                    compound: compound
+                });
+            }
+
+            // Get updated state
+            const newState = await api.get(`/gameplay/${state.game_id}/state`);
+            renderGameScreen(container, newState);
+        } catch (error) {
+            showAlert(container.querySelector('.game-content'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
+
+    // Auto-refresh when waiting for opponent
+    if (isMultiplayer && imReady && !opponentReady) {
+        startRefreshInterval(state.game_id, container);
+    }
+}
+
+// Track race simulation state
+let raceAutoSimulating = false;
+let lastWeather = 'dry';
+
+/**
+ * Race In Progress Screen - Auto-simulates, pauses for pit decisions
+ */
+function renderRaceInProgress(container, state) {
+    const raceState = state.race_state;
+    const playerDrivers = state.player_team?.drivers || [];
+    const playerPositions = raceState?.positions?.filter(p => p.player_id === state.your_player_id && p.status !== 'dnf') || [];
+
+    // Check if we need to pause for pit decision
+    const needsPitDecision = checkNeedsPitDecision(playerPositions, raceState);
+    const weatherChanged = lastWeather !== raceState?.weather && raceState?.weather !== 'dry';
+    const shouldPause = needsPitDecision || weatherChanged;
+
+    // Weather indicator
+    const weatherIcon = raceState?.weather === 'light_rain' ? '🌧️' :
+                       raceState?.weather === 'heavy_rain' ? '⛈️' : '☀️';
+    const weatherText = raceState?.weather?.replace('_', ' ').toUpperCase() || 'DRY';
+
+    // Update last weather
+    lastWeather = raceState?.weather || 'dry';
+
+    container.innerHTML = `
+        <div class="game-container race-screen">
+            <div class="game-header">
+                <div class="race-header-info">
+                    <div>
+                        <h1>${escapeHtml(state.current_track?.name || 'Race')}</h1>
+                        <span class="weather-indicator ${raceState?.weather !== 'dry' ? 'rain-warning' : ''}">${weatherIcon} ${weatherText}</span>
+                        ${raceState?.safety_car ? '<span class="safety-car-badge">SAFETY CAR</span>' : ''}
+                    </div>
+                    <div class="lap-counter">
+                        <span class="lap-current">Lap ${raceState?.current_lap || 0}</span>
+                        <span class="lap-total">/ ${raceState?.total_laps || 0}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="game-content">
+                ${shouldPause && playerPositions.length > 0 ? `
+                    <div class="pit-alert card mb-lg ${weatherChanged ? 'weather-alert' : 'tire-alert'}">
+                        <div class="alert-header">
+                            ${weatherChanged ? `
+                                <span class="alert-icon">⛈️</span>
+                                <h3>Weather Change!</h3>
+                                <p>Rain has started - consider switching to wet tires</p>
+                            ` : `
+                                <span class="alert-icon">⚠️</span>
+                                <h3>Pit Stop Recommended</h3>
+                                <p>One or more drivers have high tire wear</p>
+                            `}
+                        </div>
+                        <div class="pit-driver-controls">
+                            ${playerPositions.map(p => {
+                                const driver = playerDrivers.find(d => d.name === p.driver_name);
+                                const gripLevel = getGripLevel(p.tire_wear);
+                                const isWrongTire = (raceState?.weather !== 'dry' && !['intermediate', 'wet'].includes(p.tire)) ||
+                                                   (raceState?.weather === 'dry' && ['intermediate', 'wet'].includes(p.tire));
+                                const needsPit = p.tire_wear >= 70 || isWrongTire;
+                                return `
+                                    <div class="pit-driver-card ${needsPit ? 'needs-pit' : ''}">
+                                        <div class="pit-driver-info">
+                                            <strong>${escapeHtml(p.driver_name)}</strong>
+                                            <span class="pit-status">P${p.position} | ${p.tire.toUpperCase()} | Wear: ${p.tire_wear}% (${gripLevel})</span>
+                                        </div>
+                                        <div class="pit-buttons">
+                                            ${raceState?.weather === 'dry' ? `
+                                                <button class="btn btn-sm pit-btn tire-soft" data-driver="${driver?.id}" data-compound="soft">Soft</button>
+                                                <button class="btn btn-sm pit-btn tire-medium" data-driver="${driver?.id}" data-compound="medium">Medium</button>
+                                                <button class="btn btn-sm pit-btn tire-hard" data-driver="${driver?.id}" data-compound="hard">Hard</button>
+                                            ` : `
+                                                <button class="btn btn-sm pit-btn tire-intermediate" data-driver="${driver?.id}" data-compound="intermediate">Inters</button>
+                                                <button class="btn btn-sm pit-btn tire-wet" data-driver="${driver?.id}" data-compound="wet">Wets</button>
+                                            `}
+                                            <button class="btn btn-sm btn-secondary skip-pit-btn" data-driver="${driver?.id}">Stay Out</button>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                        <button class="btn btn-primary btn-block mt-lg" id="continue-race-btn">
+                            Continue Race
+                        </button>
+                    </div>
+                ` : `
+                    <div class="race-simulating card mb-lg">
+                        <div class="simulating-status">
+                            <div class="spinner-small"></div>
+                            <span>Race in progress...</span>
+                        </div>
+                    </div>
+                `}
+
+                <div class="race-positions card">
+                    <table class="race-table">
+                        <thead>
+                            <tr>
+                                <th>Pos</th>
+                                <th>Driver</th>
+                                <th>Team</th>
+                                <th>Gap</th>
+                                <th>Tire</th>
+                                <th>Wear</th>
+                                <th>Pits</th>
+                            </tr>
+                        </thead>
+                        <tbody id="race-positions">
+                            ${renderRacePositions(raceState?.positions || [], state.your_player_id)}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="race-events card mt-lg">
+                    <h3>Recent Events</h3>
+                    <div id="race-events" class="events-list">
+                        ${raceState?.events?.slice(-8).map(e => `
+                            <div class="event-item event-${e.event_type}">
+                                <span class="event-lap">Lap ${e.lap}</span>
+                                <span class="event-text">${escapeHtml(e.description)}</span>
+                            </div>
+                        `).reverse().join('') || '<p class="text-muted">No events yet</p>'}
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Pit stop button handlers
+    container.querySelectorAll('.pit-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const driverId = btn.dataset.driver;
+            const compound = btn.dataset.compound;
+            setButtonLoading(btn, true);
+            try {
+                await api.post(`/gameplay/${state.game_id}/pit-stop`, {
+                    driver_id: driverId,
+                    compound: compound
+                });
+                // Mark this driver's card as pitted
+                const card = btn.closest('.pit-driver-card');
+                if (card) {
+                    card.classList.add('pitted');
+                    card.innerHTML = `<div class="pitted-message">Pitting for ${compound.toUpperCase()} tires</div>`;
+                }
+            } catch (error) {
+                showAlert(container.querySelector('.game-content'), error.message, 'error');
+                setButtonLoading(btn, false);
+            }
+        });
+    });
+
+    // Skip pit handlers
+    container.querySelectorAll('.skip-pit-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const card = btn.closest('.pit-driver-card');
+            if (card) {
+                card.classList.add('pitted');
+                card.innerHTML = `<div class="pitted-message">Staying out</div>`;
+            }
+        });
+    });
+
+    // Continue race after pit decisions
+    document.getElementById('continue-race-btn')?.addEventListener('click', () => {
+        autoSimulateRace(container, state.game_id);
+    });
+
+    // Auto-start simulation if no pit decision needed
+    if (!shouldPause && !raceState?.is_finished) {
+        autoSimulateRace(container, state.game_id);
+    }
+}
+
+/**
+ * Check if any player driver needs a pit decision
+ */
+function checkNeedsPitDecision(playerPositions, raceState) {
+    if (!playerPositions || playerPositions.length === 0) return false;
+
+    for (const p of playerPositions) {
+        // High tire wear
+        if (p.tire_wear >= 70) return true;
+
+        // Wrong tires for weather
+        const isWet = raceState?.weather !== 'dry';
+        const hasWetTires = ['intermediate', 'wet'].includes(p.tire);
+        if (isWet && !hasWetTires) return true;
+        if (!isWet && hasWetTires && p.pit_stops > 0) return true; // Only flag if they've pitted before
+    }
+
+    return false;
+}
+
+function getGripLevel(wear) {
+    if (wear <= 20) return 'OPTIMAL';
+    if (wear <= 40) return 'GOOD';
+    if (wear <= 60) return 'WORN';
+    if (wear <= 80) return 'CRITICAL';
+    return 'DEAD';
+}
+
+/**
+ * Auto-simulate race until pit decision needed or race ends
+ */
+async function autoSimulateRace(container, gameId) {
+    if (raceAutoSimulating) return;
+    raceAutoSimulating = true;
+
+    try {
+        let state = await api.post(`/gameplay/${gameId}/simulate-lap`);
+
+        // Keep simulating until we need to pause
+        while (state.phase === GamePhase.RACE_IN_PROGRESS) {
+            const raceState = state.race_state;
+            const playerPositions = raceState?.positions?.filter(p => p.player_id === state.your_player_id && p.status !== 'dnf') || [];
+
+            // Check if we need to pause
+            const needsPit = checkNeedsPitDecision(playerPositions, raceState);
+            const weatherChanged = lastWeather !== raceState?.weather && raceState?.weather !== 'dry';
+
+            if (needsPit || weatherChanged || raceState?.is_finished) {
+                break;
+            }
+
+            // Small delay for visual effect
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            // Simulate next lap
+            state = await api.post(`/gameplay/${gameId}/simulate-lap`);
+        }
+
+        raceAutoSimulating = false;
+        renderGameScreen(container, state);
+    } catch (error) {
+        raceAutoSimulating = false;
+        showAlert(container.querySelector('.game-content'), error.message, 'error');
+    }
+}
+
+async function simulateFullRace(container, gameId) {
+    const btn = document.getElementById('sim-race-btn');
+    setButtonLoading(btn, true);
+
+    try {
+        const newState = await api.post(`/gameplay/${gameId}/simulate-race`);
+        renderGameScreen(container, newState);
+    } catch (error) {
+        showAlert(container.querySelector('.game-content'), error.message, 'error');
+        setButtonLoading(btn, false);
+    }
+}
+
+function renderRacePositions(positions, yourPlayerId) {
+    return positions.map(p => `
+        <tr class="${p.is_player_driver ? 'player-row' : ''} ${p.player_id === yourPlayerId ? 'your-driver' : ''} ${p.status === 'dnf' ? 'dnf-row' : ''}">
+            <td class="pos-cell">${p.status === 'dnf' ? 'DNF' : p.position}</td>
+            <td>${escapeHtml(p.driver_name)}</td>
+            <td class="team-cell">${escapeHtml(p.team_name || '')}</td>
+            <td>${p.gap}</td>
+            <td><span class="tire-badge tire-${p.tire}">${p.tire.charAt(0).toUpperCase()}</span></td>
+            <td>
+                <div class="wear-bar">
+                    <div class="wear-fill" style="width: ${p.tire_wear}%; background: ${getWearColor(p.tire_wear)}"></div>
+                </div>
+            </td>
+            <td>${p.pit_stops}</td>
+        </tr>
+    `).join('');
+}
+
+function getWearColor(wear) {
+    if (wear < 40) return 'var(--success)';
+    if (wear < 70) return 'var(--warning)';
+    return 'var(--error)';
+}
+
+/**
+ * Race Results Screen - With sync for multiplayer
+ */
+function renderRaceResults(container, state) {
+    const isMultiplayer = state.is_multiplayer;
+    const myPlayer = state.players?.find(p => p.player_id === state.your_player_id);
+    const otherPlayer = state.players?.find(p => p.player_id !== state.your_player_id);
+    const imReady = myPlayer?.is_ready;
+    const opponentReady = otherPlayer?.is_ready;
+    const bothReady = isMultiplayer ? (imReady && opponentReady) : true;
+
+    // Calculate points earned this race for each player
+    const myDrivers = state.race_state?.positions?.filter(p => p.player_id === state.your_player_id) || [];
+    const myPoints = myDrivers.reduce((sum, p) => sum + (p.status !== 'dnf' ? getPointsForPosition(p.position) : 0), 0);
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <h1>Race Results</h1>
+                <p class="text-secondary">${escapeHtml(state.current_track?.name || 'Unknown Track')}</p>
+            </div>
+
+            <div class="game-content">
+                <div class="race-summary card mb-lg">
+                    <h3>Your Results</h3>
+                    <div class="your-results">
+                        ${myDrivers.map(p => `
+                            <div class="result-driver ${p.status === 'dnf' ? 'dnf' : p.position <= 3 ? 'podium' : ''}">
+                                <span class="result-pos">${p.status === 'dnf' ? 'DNF' : `P${p.position}`}</span>
+                                <span class="result-name">${escapeHtml(p.driver_name)}</span>
+                                <span class="result-points">+${p.status === 'dnf' ? '0' : getPointsForPosition(p.position)} pts</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <div class="total-points">Total: +${myPoints} points</div>
+                </div>
+
+                <div class="card">
+                    <h3>Full Classification</h3>
+                    <table class="results-table">
+                        <thead>
+                            <tr>
+                                <th>Pos</th>
+                                <th>Driver</th>
+                                <th>Team</th>
+                                <th>Points</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${state.race_state?.positions?.map(p => `
+                                <tr class="${p.is_player_driver ? 'player-row' : ''} ${p.player_id === state.your_player_id ? 'your-driver' : ''} ${p.status === 'dnf' ? 'dnf-row' : ''}">
+                                    <td class="pos-cell">${p.status === 'dnf' ? 'DNF' : p.position}</td>
+                                    <td>${escapeHtml(p.driver_name)}</td>
+                                    <td>${escapeHtml(p.team_name)}</td>
+                                    <td>${p.status === 'dnf' ? '0' : getPointsForPosition(p.position)}</td>
+                                </tr>
+                            `).join('') || '<tr><td colspan="4">No results</td></tr>'}
+                        </tbody>
+                    </table>
+                </div>
+
+                ${isMultiplayer ? `
+                    <div class="sync-status mt-xl">
+                        <div class="sync-player ${imReady ? 'is-ready' : ''}">
+                            <span class="sync-name">You</span>
+                            <span class="sync-indicator">${imReady ? 'Ready' : 'Reviewing'}</span>
+                        </div>
+                        <div class="sync-player ${opponentReady ? 'is-ready' : ''}">
+                            <span class="sync-name">${escapeHtml(otherPlayer?.username || 'Opponent')}</span>
+                            <span class="sync-indicator">${opponentReady ? 'Ready' : 'Reviewing'}</span>
+                        </div>
+                    </div>
+                    ${!imReady ? `
+                        <button class="btn btn-success btn-lg btn-block mt-lg" id="ready-btn">
+                            Ready to Continue
+                        </button>
+                    ` : bothReady ? `
+                        <button class="btn btn-primary btn-lg btn-block mt-lg" id="continue-btn">
+                            Continue to Next Race
+                        </button>
+                    ` : `
+                        <div class="waiting-sync mt-lg">
+                            <div class="spinner-small"></div>
+                            <span>Waiting for ${escapeHtml(otherPlayer?.username || 'opponent')}...</span>
+                        </div>
+                    `}
+                ` : `
+                    <button class="btn btn-primary btn-lg btn-block mt-xl" id="continue-btn">
+                        Continue
+                    </button>
+                `}
+            </div>
+        </div>
+    `;
+
+    document.getElementById('ready-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('ready-btn');
+        setButtonLoading(btn, true);
+        try {
+            const newState = await api.post(`/gameplay/${state.game_id}/ready`, { ready: true });
+            renderGameScreen(container, newState);
+        } catch (error) {
+            showAlert(container.querySelector('.game-content'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
+
+    document.getElementById('continue-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('continue-btn');
+        setButtonLoading(btn, true);
+        try {
+            const newState = await api.post(`/gameplay/${state.game_id}/next-race`);
+            renderGameScreen(container, newState);
+        } catch (error) {
+            showAlert(container.querySelector('.game-content'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
+
+    // Auto-refresh when waiting for opponent
+    if (isMultiplayer && imReady && !opponentReady) {
+        startRefreshInterval(state.game_id, container);
+    }
+}
+
+/**
+ * Team Screen with Morale
+ */
+function renderTeamScreen(container, state) {
+    const team = state.player_team;
+    const car = team?.car;
+    const sponsor = team?.sponsor;
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <button class="btn btn-secondary" id="back-btn">Back</button>
+                <h1>My Team</h1>
+            </div>
+
+            <div class="game-content">
+                <div class="team-info-grid">
+                    <div class="card">
+                        <h3>Team Info</h3>
+                        <p><strong>${escapeHtml(team?.name || 'Unknown')}</strong></p>
+                        <p>Budget: $${team?.budget?.toFixed(1) || 0}M</p>
+                        <p>Season Points: ${team?.season_points || 0}</p>
+                        <p>Race Wins: ${team?.race_wins || 0}</p>
+                    </div>
+
+                    ${sponsor ? `
+                        <div class="card">
+                            <h3>Sponsor: ${escapeHtml(sponsor.name)}</h3>
+                            <p class="sponsor-tier tier-${sponsor.tier}">${sponsor.tier.toUpperCase()}</p>
+                            <p>Per Race: $${sponsor.payment_per_race?.toFixed(1) || 0}M</p>
+                            <p>Objectives Met: ${sponsor.objectives_met || 0}/${sponsor.races_completed || 0}</p>
+                        </div>
+                    ` : ''}
+
+                    <div class="card">
+                        <h3>Car Stats</h3>
+                        <div class="car-stats">
+                            ${renderCarStat('Downforce', car?.downforce)}
+                            ${renderCarStat('Aero Efficiency', car?.aero_efficiency)}
+                            ${renderCarStat('Chassis', car?.chassis)}
+                            ${renderCarStat('Power Unit', car?.power_unit)}
+                            ${renderCarStat('Reliability', car?.reliability)}
+                            ${renderCarStat('Tire Cooling', car?.tire_cooling)}
+                        </div>
+                        <p class="mt-md"><strong>Overall: ${calculateCarOverall(car)}</strong></p>
+                    </div>
+                </div>
+
+                <h3 class="mt-xl">Drivers</h3>
+                <div class="drivers-grid mt-md">
+                    ${team?.drivers?.map(driver => `
+                        <div class="card driver-detail-card">
+                            <h4>${escapeHtml(driver.name)}</h4>
+                            <p class="text-secondary">${driver.age} years old - ${escapeHtml(driver.nationality)}</p>
+
+                            <div class="driver-morale mt-md">
+                                <span>Morale: </span>
+                                <div class="morale-bar">
+                                    <div class="morale-fill" style="width: ${driver.morale || 75}%; background: ${getMoraleColor(driver.morale)}"></div>
+                                </div>
+                                <span>${driver.morale || 75}%</span>
+                            </div>
+
+                            <div class="driver-stats-detail mt-md">
+                                ${renderDriverStat('Pace', driver.stats.pace)}
+                                ${renderDriverStat('Overtaking', driver.stats.overtaking)}
+                                ${renderDriverStat('Defending', driver.stats.defending)}
+                                ${renderDriverStat('Consistency', driver.stats.consistency)}
+                                ${renderDriverStat('Tire Mgmt', driver.stats.tire_management)}
+                                ${renderDriverStat('Wet Skill', driver.stats.wet_skill)}
+                            </div>
+
+                            <div class="driver-season-stats mt-md">
+                                <span class="mini-stat">Points: ${driver.season_points || 0}</span>
+                                <span class="mini-stat">Wins: ${driver.race_wins || 0}</span>
+                                <span class="mini-stat">Podiums: ${driver.podiums || 0}</span>
+                            </div>
+
+                            ${driver.contract ? `
+                                <div class="driver-contract mt-md">
+                                    <small>Contract: ${driver.contract.years_remaining} year(s) @ $${driver.contract.salary?.toFixed(1) || driver.salary?.toFixed(1)}M</small>
+                                </div>
+                            ` : ''}
+                        </div>
+                    `).join('') || '<p>No drivers</p>'}
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('back-btn')?.addEventListener('click', () => {
+        renderMainMenu(container, state);
+    });
+}
+
+function getMoraleColor(morale) {
+    if (morale >= 80) return 'var(--success)';
+    if (morale >= 50) return 'var(--warning)';
+    return 'var(--error)';
+}
+
+/**
+ * Standings Screen
+ */
+function renderStandingsScreen(container, state) {
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <button class="btn btn-secondary" id="back-btn">Back</button>
+                <h1>Championship Standings</h1>
+            </div>
+
+            <div class="game-content">
+                <div class="standings-tabs">
+                    <button class="tab-btn active" data-tab="drivers">Drivers</button>
+                    <button class="tab-btn" data-tab="constructors">Constructors</button>
+                </div>
+
+                <div class="tab-content" id="drivers-tab">
+                    <div class="card">
+                        <table class="standings-table">
+                            <thead>
+                                <tr>
+                                    <th>Pos</th>
+                                    <th>Driver</th>
+                                    <th>Team</th>
+                                    <th>Wins</th>
+                                    <th>Points</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${state.driver_standings?.map(s => `
+                                    <tr class="${s.is_player_driver ? 'player-row' : ''} ${s.player_id === state.your_player_id ? 'your-driver' : ''}">
+                                        <td class="pos-cell">${s.position}</td>
+                                        <td>${escapeHtml(s.driver_name)}</td>
+                                        <td>${escapeHtml(s.team_name)}</td>
+                                        <td>${s.wins}</td>
+                                        <td><strong>${s.points}</strong></td>
+                                    </tr>
+                                `).join('') || '<tr><td colspan="5">No standings</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="constructors-tab" style="display: none;">
+                    <div class="card">
+                        <table class="standings-table">
+                            <thead>
+                                <tr>
+                                    <th>Pos</th>
+                                    <th>Team</th>
+                                    <th>Wins</th>
+                                    <th>Points</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${state.constructor_standings?.map(s => `
+                                    <tr class="${s.is_player_team ? 'player-row' : ''} ${s.player_id === state.your_player_id ? 'your-driver' : ''}">
+                                        <td class="pos-cell">${s.position}</td>
+                                        <td>${escapeHtml(s.team_name)}</td>
+                                        <td>${s.wins}</td>
+                                        <td><strong>${s.points}</strong></td>
+                                    </tr>
+                                `).join('') || '<tr><td colspan="4">No standings</td></tr>'}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Tab switching
+    container.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            container.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+
+            const tab = btn.dataset.tab;
+            document.getElementById('drivers-tab').style.display = tab === 'drivers' ? 'block' : 'none';
+            document.getElementById('constructors-tab').style.display = tab === 'constructors' ? 'block' : 'none';
+        });
+    });
+
+    document.getElementById('back-btn')?.addEventListener('click', () => {
+        renderMainMenu(container, state);
+    });
+}
+
+/**
+ * Calendar Screen
+ */
+function renderCalendarScreen(container, state) {
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <button class="btn btn-secondary" id="back-btn">Back</button>
+                <h1>Season Calendar</h1>
+            </div>
+
+            <div class="game-content">
+                <div class="calendar-grid">
+                    ${state.calendar?.map(race => `
+                        <div class="card calendar-card ${race.is_current ? 'current-race' : ''} ${race.is_completed ? 'completed-race' : ''}">
+                            <div class="race-number">R${race.race_number}</div>
+                            <h4>${escapeHtml(race.track.name)}</h4>
+                            <p class="text-secondary">${escapeHtml(race.track.country)}</p>
+                            ${race.is_completed ? '<span class="race-status completed">Completed</span>' : ''}
+                            ${race.is_current ? '<span class="race-status current">Next Race</span>' : ''}
+                        </div>
+                    `).join('') || '<p>No calendar data</p>'}
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('back-btn')?.addEventListener('click', () => {
+        renderMainMenu(container, state);
+    });
+}
+
+/**
+ * Season End Screen
+ */
+function renderSeasonEnd(container, state) {
+    const driverChamp = state.driver_standings?.[0];
+    const constructorChamp = state.constructor_standings?.[0];
+    const playerPosition = state.constructor_standings?.find(s => s.player_id === state.your_player_id)?.position || 'N/A';
+
+    container.innerHTML = `
+        <div class="game-container">
+            <div class="game-header">
+                <h1>Season ${state.current_season} Complete!</h1>
+            </div>
+
+            <div class="game-content text-center">
+                <div class="card champion-card mb-xl">
+                    <h2>Champions</h2>
+                    <div class="champions-grid mt-lg">
+                        <div>
+                            <h4>Drivers' Champion</h4>
+                            <p class="champion-name">${escapeHtml(driverChamp?.driver_name || 'Unknown')}</p>
+                            <p class="text-secondary">${driverChamp?.points || 0} points</p>
+                        </div>
+                        <div>
+                            <h4>Constructors' Champion</h4>
+                            <p class="champion-name">${escapeHtml(constructorChamp?.team_name || 'Unknown')}</p>
+                            <p class="text-secondary">${constructorChamp?.points || 0} points</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-xl">
+                    <h3>Your Team Finished</h3>
+                    <p class="season-position">${playerPosition}${getOrdinalSuffix(playerPosition)}</p>
+                    <p class="text-secondary">${state.player_team?.season_points || 0} points</p>
+                </div>
+
+                <a href="#/games" class="btn btn-primary btn-lg">Return to Lobby</a>
+            </div>
+        </div>
+    `;
+}
+
+// Helper functions
+function calculateOverall(stats) {
+    return Math.round(
+        stats.pace * 0.25 +
+        stats.overtaking * 0.15 +
+        stats.defending * 0.15 +
+        stats.consistency * 0.20 +
+        stats.tire_management * 0.15 +
+        stats.wet_skill * 0.10
+    );
+}
+
+function calculateCarOverall(car) {
+    if (!car) return 0;
+    return Math.round(
+        (car.downforce || 0) * 0.18 +
+        (car.aero_efficiency || 0) * 0.18 +
+        (car.chassis || 0) * 0.22 +
+        (car.power_unit || 0) * 0.18 +
+        (car.reliability || 0) * 0.12 +
+        (car.tire_cooling || 0) * 0.12
+    );
+}
+
+function getDriverQualifyingPosition(state, driverName) {
+    const result = state.qualifying_results?.find(r => r.driver_name === driverName);
+    return result?.position || '?';
+}
+
+function getPointsForPosition(position) {
+    const points = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+    return position <= 10 ? points[position - 1] : 0;
+}
+
+function getOrdinalSuffix(n) {
+    const s = ['th', 'st', 'nd', 'rd'];
+    const v = n % 100;
+    return s[(v - 20) % 10] || s[v] || s[0];
+}
+
+function renderCarStat(name, value) {
+    return `
+        <div class="car-stat">
+            <span class="stat-name">${name}</span>
+            <div class="stat-bar-container">
+                <div class="stat-bar" style="width: ${value || 0}%"></div>
+            </div>
+            <span class="stat-value">${value || 0}</span>
+        </div>
+    `;
+}
+
+function renderDriverStat(name, value) {
+    return `
+        <div class="driver-stat">
+            <span class="stat-name">${name}</span>
+            <div class="stat-bar-container">
+                <div class="stat-bar" style="width: ${value || 0}%; background: ${getStatColor(value)}"></div>
+            </div>
+            <span class="stat-value">${value || 0}</span>
+        </div>
+    `;
+}
+
+function getStatColor(value) {
+    if (value >= 85) return 'var(--success)';
+    if (value >= 70) return 'var(--accent-primary)';
+    if (value >= 55) return 'var(--warning)';
+    return 'var(--error)';
+}
+
+export { GamePhase, renderGameScreen };

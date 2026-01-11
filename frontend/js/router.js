@@ -4,6 +4,7 @@ import { auth } from './auth.js';
 class Router {
     constructor() {
         this.routes = {};
+        this.dynamicRoutes = []; // For pattern-based routes
         this.currentRoute = null;
         this.appElement = null;
 
@@ -26,6 +27,13 @@ class Router {
     }
 
     /**
+     * Register a dynamic route with a regex pattern
+     */
+    addDynamicRoute(pattern, handler, options = {}) {
+        this.dynamicRoutes.push({ pattern, handler, options });
+    }
+
+    /**
      * Navigate to a path
      */
     navigate(path) {
@@ -40,11 +48,34 @@ class Router {
     }
 
     /**
+     * Find matching dynamic route
+     */
+    findDynamicRoute(path) {
+        for (const route of this.dynamicRoutes) {
+            const match = path.match(route.pattern);
+            if (match) {
+                return { route, match };
+            }
+        }
+        return null;
+    }
+
+    /**
      * Handle current route
      */
     async handleRoute() {
         const path = this.getPath();
-        const route = this.routes[path];
+        let route = this.routes[path];
+        let dynamicMatch = null;
+
+        // Check for dynamic route match if no exact match
+        if (!route) {
+            const dynamicResult = this.findDynamicRoute(path);
+            if (dynamicResult) {
+                route = dynamicResult.route;
+                dynamicMatch = dynamicResult.match;
+            }
+        }
 
         if (!route) {
             // Default to welcome or dashboard based on auth state
@@ -72,7 +103,12 @@ class Router {
 
         // Call route handler
         try {
-            await route.handler(this.appElement);
+            if (dynamicMatch) {
+                // Pass captured groups to handler
+                await route.handler(this.appElement, ...dynamicMatch.slice(1));
+            } else {
+                await route.handler(this.appElement);
+            }
         } catch (e) {
             console.error('Route handler error:', e);
             this.appElement.innerHTML = `

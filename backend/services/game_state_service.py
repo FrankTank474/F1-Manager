@@ -218,8 +218,10 @@ class Weather(Enum):
 
 class TireState:
     """Tire state with CLI performance curves."""
-    BASE_PERFORMANCE = {"soft": 1.0, "medium": 0.75, "hard": 0.55, "intermediate": 0.65, "wet": 0.55}
-    DEGRADATION_RATES = {"soft": 4.5, "medium": 2.3, "hard": 1.6, "intermediate": 2.0, "wet": 1.8}
+    # Performance closer together: soft fastest, but medium/hard more competitive
+    BASE_PERFORMANCE = {"soft": 1.0, "medium": 0.92, "hard": 0.85, "intermediate": 0.88, "wet": 0.82}
+    # Higher degradation = shorter tire life, forces multiple stops
+    DEGRADATION_RATES = {"soft": 6.0, "medium": 3.5, "hard": 2.2, "intermediate": 2.8, "wet": 2.4}
 
     def __init__(self, compound: str):
         self.compound = compound
@@ -2231,6 +2233,7 @@ class MultiplayerGameState:
                 "total_time": 0.0,
                 "gap": "Leader" if q["position"] == 1 else f"+{q['position'] * 0.5:.1f}s",
                 "pit_stops": 0,
+                "used_compounds": {tire_compound},  # Track used tire compounds
                 "status": "racing",
                 "is_player_driver": q.get("is_player_driver", False),
                 "player_id": q.get("player_id"),
@@ -2528,6 +2531,7 @@ class MultiplayerGameState:
     def _simulate_ai_pits(self):
         """AI pit stop decisions."""
         track = self._tracks[self.current_race - 1]
+        dry_compounds = ["soft", "medium", "hard"]
 
         for entry in self.race_entries:
             if entry["dnf"] or entry["is_player_driver"]:
@@ -2535,6 +2539,7 @@ class MultiplayerGameState:
 
             should_pit = False
             new_compound = "medium"
+            used = entry.get("used_compounds", set())
 
             if self.weather == Weather.HEAVY_RAIN and entry["tire"].compound not in ["wet"]:
                 should_pit = True
@@ -2544,44 +2549,57 @@ class MultiplayerGameState:
                 new_compound = "intermediate"
             elif self.weather == Weather.DRY and entry["tire"].compound in ["intermediate", "wet"]:
                 should_pit = True
-                new_compound = "medium"
+                # Pick unused dry compound
+                available = [c for c in dry_compounds if c not in used]
+                new_compound = available[0] if available else "medium"
             elif entry["tire"].wear > 70:
                 should_pit = True
                 laps_remaining = self.total_laps - self.current_lap
+                # Prefer unused compounds
+                available = [c for c in dry_compounds if c not in used]
+                if not available:
+                    available = dry_compounds  # All used, pick based on strategy
                 if laps_remaining > 25:
-                    new_compound = "hard"
+                    new_compound = "hard" if "hard" in available else available[-1]
                 elif laps_remaining > 15:
-                    new_compound = "medium"
+                    new_compound = "medium" if "medium" in available else available[0]
                 else:
-                    new_compound = "soft"
+                    new_compound = "soft" if "soft" in available else available[0]
 
             if should_pit:
                 entry["tire"] = TireState(new_compound)
                 entry["total_time"] += track["pit_loss_time"]
                 entry["pit_stops"] += 1
+                entry.setdefault("used_compounds", set()).add(new_compound)
                 self.race_events.append({
                     "lap": self.current_lap, "event_type": "pit_stop",
                     "description": f"{entry['driver_name']} pits for {new_compound.upper()} tires"
                 })
 
-    def pit_player_driver(self, player_id: str, driver_id: str, compound: str) -> bool:
-        """Pit a player's driver."""
+    def pit_player_driver(self, player_id: str, driver_id: str, compound: str) -> dict:
+        """Pit a player's driver. Returns dict with success status and error message."""
         if self.phase != GamePhase.RACE_IN_PROGRESS:
-            return False
+            return {"success": False, "error": "Race not in progress"}
 
         track = self._tracks[self.current_race - 1]
 
         for entry in self.race_entries:
             if entry["player_id"] == player_id and entry["driver"]["id"] == driver_id and not entry["dnf"]:
+                used = entry.get("used_compounds", set())
+                # Check if compound already used (wet weather tires exempt)
+                if compound in used and compound not in ["intermediate", "wet"]:
+                    return {"success": False, "error": f"Already used {compound} tires - must use different compound"}
+
                 entry["tire"] = TireState(compound)
                 entry["total_time"] += track["pit_loss_time"]
                 entry["pit_stops"] += 1
+                entry.setdefault("used_compounds", set()).add(compound)
                 self.race_events.append({
                     "lap": self.current_lap, "event_type": "pit_stop",
                     "description": f"{entry['driver_name']} pits for {compound.upper()} tires"
                 })
-                return True
-        return False
+                return {"success": True}
+        return {"success": False, "error": "Driver not found"}
 
     def simulate_full_race(self, player_id: str = None):
         """Simulate entire race."""
@@ -2592,6 +2610,20 @@ class MultiplayerGameState:
         """Finish race and award points."""
         self.race_finished = True
         self.phase = GamePhase.RACE_RESULTS
+
+        # Mandatory 2 pit stops rule - 30 second penalty for each missing stop
+        MIN_PIT_STOPS = 2
+        for entry in self.race_entries:
+            if not entry["dnf"]:
+                pit_deficit = max(0, MIN_PIT_STOPS - entry["pit_stops"])
+                if pit_deficit > 0:
+                    penalty = pit_deficit * 30  # 30 second penalty per missing stop
+                    entry["total_time"] += penalty
+                    entry["pit_penalty"] = penalty
+                    self.race_events.append({
+                        "lap": self.total_laps, "event_type": "penalty",
+                        "description": f"{entry['driver_name']} receives {penalty}s penalty for insufficient pit stops ({entry['pit_stops']}/{MIN_PIT_STOPS})"
+                    })
 
         active = [e for e in self.race_entries if not e["dnf"]]
         active.sort(key=lambda e: e["total_time"])
@@ -3413,6 +3445,7 @@ class MultiplayerGameState:
                 "total_time": 0.0,
                 "gap": "Leader" if q["position"] == 1 else f"+{q['position'] * 0.5:.1f}s",
                 "pit_stops": 0,
+                "used_compounds": {tire_compound},  # Track used tire compounds
                 "status": "racing",
                 "is_player_driver": q.get("is_player_driver", False),
                 "player_id": q.get("player_id"),
@@ -3612,6 +3645,11 @@ class MultiplayerGameState:
         if len(team["drivers"]) >= 2:
             return False
 
+        # If driver is coming from another team, give that team a replacement
+        old_team_name = driver.get("team_name")
+        if old_team_name and old_team_name != team["name"]:
+            self._replace_driver_in_ai_team(old_team_name, driver)
+
         # Sign the driver
         team["budget"] -= driver["market_value"]
         driver["team_name"] = team["name"]
@@ -3625,6 +3663,45 @@ class MultiplayerGameState:
             MessageType.TEAM_UPDATE)
 
         return True
+
+    def _replace_driver_in_ai_team(self, team_name: str, departing_driver: Dict):
+        """Replace a departing driver in an AI team with a free agent."""
+        # Find a suitable free agent replacement
+        free_agents = [d for d in self._all_drivers
+                      if d.get("is_free_agent") and d.get("player_id") is None
+                      and d["id"] != departing_driver["id"]]
+
+        if not free_agents:
+            return  # No free agents available
+
+        # Sort by overall rating and pick a reasonable replacement
+        free_agents.sort(key=lambda d: d.get("overall", 50), reverse=True)
+
+        # Pick a driver that's reasonably close in skill
+        departing_overall = departing_driver.get("overall", 70)
+        replacement = None
+        for fa in free_agents:
+            fa_overall = fa.get("overall", 50)
+            # Accept drivers within 15 points of the departing driver
+            if abs(fa_overall - departing_overall) <= 15:
+                replacement = fa
+                break
+
+        if not replacement:
+            replacement = free_agents[0]  # Just take the best available
+
+        # Assign the replacement to the team
+        replacement["team_name"] = team_name
+        replacement["is_free_agent"] = False
+        replacement["contract_years"] = 1
+        replacement["player_id"] = None
+
+        # Update driver standings if exists
+        existing_standing = next((ds for ds in self._driver_standings
+                                 if ds["driver_name"] == departing_driver["name"]), None)
+        if existing_standing:
+            existing_standing["driver_name"] = replacement["name"]
+            existing_standing["team_name"] = team_name
 
     def release_driver_transfer(self, player_id: str, driver_id: str) -> bool:
         """Release a driver during transfer window."""

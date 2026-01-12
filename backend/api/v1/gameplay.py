@@ -437,9 +437,9 @@ async def make_pit_stop(
     if game_state.phase != GamePhase.RACE_IN_PROGRESS:
         raise HTTPException(status_code=400, detail="Race not in progress")
 
-    success = game_state.pit_player_driver(user_id, request.driver_id, request.compound.value)
-    if not success:
-        raise HTTPException(status_code=400, detail="Failed to pit driver - not your driver")
+    result = game_state.pit_player_driver(user_id, request.driver_id, request.compound.value)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to pit driver"))
 
     await save_game_state(game_id)
     return game_state.get_state_response(user_id)

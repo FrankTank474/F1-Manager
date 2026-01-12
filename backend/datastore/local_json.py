@@ -1,6 +1,7 @@
 import json
 import asyncio
 import uuid
+import logging
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
@@ -8,6 +9,8 @@ from typing import Optional, Dict, Any, List
 from .interface import DatastoreInterface
 from ..models.user import User, UserUpdate, UserInDB
 from ..models.game import Game, GameInvite, GamePlayer, GameStatus, InviteStatus
+
+logger = logging.getLogger(__name__)
 
 
 class LocalJSONDatastore(DatastoreInterface):
@@ -29,8 +32,10 @@ class LocalJSONDatastore(DatastoreInterface):
 
     async def initialize(self) -> None:
         """Initialize the datastore, creating files if needed."""
+        logger.info(f"Initializing local JSON datastore at {self.data_dir}")
         self.data_dir.mkdir(parents=True, exist_ok=True)
         await self._load_data()
+        logger.info(f"Loaded data from {self.data_dir} (users={len(self._users)}, games={len(self._games)}, game_states={len(self._game_states)})")
 
     async def close(self) -> None:
         """Save data and close."""

@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import Optional, Tuple
+import logging
 
 from ..config import settings
 from ..datastore.interface import DatastoreInterface
@@ -12,6 +13,8 @@ from ..security.jwt import (
     decode_token,
     get_token_expiry,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AuthService:
@@ -38,18 +41,25 @@ class AuthService:
         self, email: str, password: str
     ) -> Optional[LoginResponse]:
         """Authenticate user and return tokens."""
+        logger.debug(f"Authentication attempt for email: {email}")
+
         # Get user by email
         user = await self.datastore.get_user_by_email(email)
         if not user:
+            logger.warning(f"Authentication failed: user not found - {email}")
             return None
 
         # Check if user is active
         if not user.is_active:
+            logger.warning(f"Authentication failed: user inactive - {email}")
             return None
 
         # Verify password
         if not verify_password(password, user.password_hash):
+            logger.warning(f"Authentication failed: invalid password - {email}")
             return None
+
+        logger.info(f"User authenticated successfully: {email}")
 
         # Record login
         await self.datastore.record_login(user.id)

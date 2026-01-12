@@ -1,5 +1,6 @@
 import uuid
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Optional, List
 
@@ -8,6 +9,8 @@ import asyncpg
 from .interface import DatastoreInterface
 from ..models.user import User, UserUpdate, UserInDB
 from ..models.game import Game, GameInvite, GamePlayer, GameStatus, InviteStatus
+
+logger = logging.getLogger(__name__)
 
 
 class PostgresDatastore(DatastoreInterface):
@@ -19,12 +22,19 @@ class PostgresDatastore(DatastoreInterface):
 
     async def initialize(self) -> None:
         """Create connection pool and ensure tables exist."""
-        self._pool = await asyncpg.create_pool(
-            self.database_url,
-            min_size=2,
-            max_size=10,
-        )
-        await self._create_tables()
+        logger.info("Connecting to PostgreSQL database...")
+        try:
+            self._pool = await asyncpg.create_pool(
+                self.database_url,
+                min_size=2,
+                max_size=10,
+            )
+            logger.info("PostgreSQL connection pool created (min=2, max=10)")
+            await self._create_tables()
+            logger.info("Database tables created/verified successfully")
+        except asyncpg.PostgresError as e:
+            logger.error(f"Failed to connect to PostgreSQL: {e}")
+            raise
 
     async def close(self) -> None:
         """Close connection pool."""

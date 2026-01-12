@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
+import logging
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -13,22 +14,44 @@ from .datastore.factory import create_datastore
 from .dependencies import set_datastore
 from .services.game_state_service import game_state_manager
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()  # Output to stdout for Railway logs
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    # Startup: Initialize datastore
-    datastore = create_datastore()
-    await datastore.initialize()
-    set_datastore(datastore)
+    logger.info("Starting F1 Manager application...")
 
-    # Set datastore on game state manager for persistence
-    game_state_manager.set_datastore(datastore)
+    # Startup: Initialize datastore
+    try:
+        logger.info("Initializing datastore...")
+        datastore = create_datastore()
+        await datastore.initialize()
+        set_datastore(datastore)
+        logger.info("Datastore initialized successfully")
+
+        # Set datastore on game state manager for persistence
+        game_state_manager.set_datastore(datastore)
+        logger.info("Game state manager configured with datastore")
+    except Exception as e:
+        logger.error(f"Failed to initialize application: {e}")
+        raise
 
     yield
 
     # Shutdown: Close datastore
+    logger.info("Shutting down application...")
     await datastore.close()
+    logger.info("Datastore closed")
 
 
 app = FastAPI(

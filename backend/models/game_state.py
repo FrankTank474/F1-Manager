@@ -651,6 +651,9 @@ class GameStateResponse(BaseModel):
     game_stopped: bool = False
     stopped_by: Optional[str] = None  # Username of player who stopped
 
+    # Fast forward status for multiplayer
+    fast_forward_status: Optional[Dict[str, Any]] = None
+
 
 # ==================== REQUEST MODELS ====================
 

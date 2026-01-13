@@ -2815,6 +2815,46 @@
     text-align: right;
 }
 
+/* Multiplayer Fast Forward styles */
+.mp-fast-forward-btn {
+    flex: 1;
+    min-width: 80px;
+}
+
+.mp-fast-forward-btn.btn-highlight {
+    background: var(--warning-color);
+    border-color: var(--warning-color);
+    color: #000;
+    font-weight: 600;
+    animation: pulse-highlight 1.5s infinite;
+}
+
+@keyframes pulse-highlight {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+}
+
+.ff-mismatch-notice,
+.ff-waiting-notice,
+.ff-opponent-waiting {
+    padding: var(--space-md);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-md);
+}
+
+.ff-mismatch-notice {
+    border-left: 4px solid var(--warning-color);
+}
+
+.ff-waiting-notice {
+    text-align: center;
+}
+
+.ff-opponent-waiting {
+    border-left: 4px solid var(--warning-color);
+}
+
 /* Wet tire styles */
 .tire-btn.tire-intermediate {
     background: linear-gradient(135deg, #27ae60, #2ecc71);

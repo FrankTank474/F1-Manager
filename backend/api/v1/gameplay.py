@@ -519,6 +519,60 @@ async def fast_forward_races(
     }
 
 
+@router.post("/{game_id}/multiplayer-fast-forward")
+async def multiplayer_fast_forward(
+    game_id: str,
+    num_races: int = 1,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Request multiplayer fast forward. Both players must agree on same race count."""
+    game_state = await get_game_state(game_id, user_id)
+
+    if game_state.phase not in [GamePhase.MAIN_MENU, GamePhase.RACE_RESULTS]:
+        raise HTTPException(status_code=400, detail="Can only fast forward from main menu or race results")
+
+    result = game_state.request_multiplayer_fast_forward(user_id, num_races)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Fast forward failed"))
+
+    await save_game_state(game_id)
+
+    # If fast forward was executed, include the results
+    if result.get("executed"):
+        return {
+            "state": game_state.get_state_response(user_id),
+            "fast_forward_results": result,
+            "executed": True
+        }
+
+    # Otherwise return state with waiting/mismatch status
+    return {
+        "state": game_state.get_state_response(user_id),
+        "waiting": result.get("waiting", False),
+        "mismatch": result.get("mismatch", False),
+        "your_request": result.get("your_request"),
+        "other_request": result.get("other_request"),
+        "message": result.get("message")
+    }
+
+
+@router.post("/{game_id}/cancel-fast-forward")
+async def cancel_fast_forward(
+    game_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Cancel a pending multiplayer fast forward request."""
+    game_state = await get_game_state(game_id, user_id)
+
+    game_state.cancel_fast_forward_request(user_id)
+    await save_game_state(game_id)
+
+    return {
+        "state": game_state.get_state_response(user_id),
+        "cancelled": True
+    }
+
+
 # ==================== INBOX ====================
 
 @router.post("/{game_id}/mark-message-read", response_model=GameStateResponse)

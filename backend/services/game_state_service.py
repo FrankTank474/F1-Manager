@@ -48,17 +48,18 @@ except ImportError as e:
 POINTS_SYSTEM = {1: 30, 2: 26, 3: 22, 4: 18, 5: 16, 6: 14, 7: 12, 8: 10, 9: 8, 10: 6, 11: 5, 12: 4, 13: 3, 14: 2, 15: 1}
 
 RACE_PRIZE_MONEY = {
-    1: 3.75, 2: 2.75, 3: 2.25, 4: 1.85, 5: 1.5, 6: 1.2, 7: 1.0, 8: 0.85, 9: 0.7, 10: 0.6
+    1: 8.0, 2: 6.0, 3: 5.0, 4: 4.0, 5: 3.5, 6: 3.0, 7: 2.5, 8: 2.0, 9: 1.75, 10: 1.5,
+    11: 1.25, 12: 1.0, 13: 0.9, 14: 0.8, 15: 0.7
 }
 
 SEASON_PRIZE_MONEY = {
-    1: 80, 2: 70, 3: 62, 4: 55, 5: 48, 6: 42, 7: 38, 8: 35, 9: 32, 10: 30, 11: 28
+    1: 100, 2: 85, 3: 75, 4: 65, 5: 58, 6: 52, 7: 47, 8: 43, 9: 40, 10: 37, 11: 35
 }
 
-# Upgrade costs per stat level
+# Upgrade costs per stat level (reduced for faster progression)
 UPGRADE_COSTS = {
-    (50, 54): 2, (55, 59): 3, (60, 64): 5, (65, 69): 7, (70, 74): 10,
-    (75, 79): 14, (80, 84): 18, (85, 89): 24, (90, 94): 32, (95, 99): 45
+    (50, 54): 1, (55, 59): 1.5, (60, 64): 2.5, (65, 69): 4, (70, 74): 6,
+    (75, 79): 9, (80, 84): 12, (85, 89): 16, (90, 94): 22, (95, 99): 30
 }
 
 # AI Team car ratings (2026 season)
@@ -462,6 +463,12 @@ class MultiplayerGameState:
         # Available sponsors for selection
         self.available_sponsors: Dict[str, List[Dict]] = {}
 
+        # Flag to track if we're in post-transfer sponsor selection (vs initial setup)
+        self.is_post_transfer_sponsor_selection: bool = False
+
+        # Multiplayer fast forward ready tracking: player_id -> num_races requested (None = not ready)
+        self.fast_forward_ready: Dict[str, Optional[int]] = {}
+
         # Game stopped flag for multiplayer sync
         self.game_stopped = False
         self.stopped_by: Optional[str] = None  # Username who stopped
@@ -532,6 +539,8 @@ class MultiplayerGameState:
             "_constructor_standings": self._constructor_standings,
             "inboxes": self.inboxes,
             "available_sponsors": self.available_sponsors,
+            "is_post_transfer_sponsor_selection": self.is_post_transfer_sponsor_selection,
+            "fast_forward_ready": self.fast_forward_ready,
             "game_stopped": self.game_stopped,
             "stopped_by": self.stopped_by,
             "news_headlines": self.news_headlines,
@@ -591,6 +600,8 @@ class MultiplayerGameState:
         game._constructor_standings = data["_constructor_standings"]
         game.inboxes = data["inboxes"]
         game.available_sponsors = data["available_sponsors"]
+        game.is_post_transfer_sponsor_selection = data.get("is_post_transfer_sponsor_selection", False)
+        game.fast_forward_ready = data.get("fast_forward_ready", {})
         game.game_stopped = data["game_stopped"]
         game.stopped_by = data["stopped_by"]
         game.news_headlines = data["news_headlines"]
@@ -1041,9 +1052,15 @@ class MultiplayerGameState:
 
         # Check if both players have selected sponsors
         if all(p["has_selected_sponsor"] for p in self.players.values()):
-            self.phase = GamePhase.TEAM_SETUP
-            self.current_race = 0
-            self._shuffle_turn_order()
+            if self.is_post_transfer_sponsor_selection:
+                # After transfer window - start the new season
+                self.is_post_transfer_sponsor_selection = False
+                self._start_new_season()
+            else:
+                # Initial setup - go to team setup phase
+                self.phase = GamePhase.TEAM_SETUP
+                self.current_race = 0
+                self._shuffle_turn_order()
         return True
 
     # ==================== DRIVER SIGNING ====================
@@ -3368,6 +3385,60 @@ class MultiplayerGameState:
             "season_ended": self.phase == GamePhase.SEASON_END
         }
 
+    def request_multiplayer_fast_forward(self, player_id: str, num_races: int) -> Dict:
+        """Request fast forward in multiplayer. Both players must agree on same number."""
+        if self.phase not in [GamePhase.MAIN_MENU, GamePhase.RACE_RESULTS]:
+            return {"success": False, "error": "Can only fast forward from main menu or race results"}
+
+        if len(self.players) != 2:
+            return {"success": False, "error": "Multiplayer fast forward requires 2 players"}
+
+        # Record this player's fast forward request
+        self.fast_forward_ready[player_id] = num_races
+
+        # Check if both players have requested fast forward with same num_races
+        all_ready = all(pid in self.fast_forward_ready for pid in self.players)
+        if not all_ready:
+            return {
+                "success": True,
+                "waiting": True,
+                "message": "Waiting for other player to ready up for fast forward"
+            }
+
+        # Get both players' requests
+        requests = [self.fast_forward_ready[pid] for pid in self.players]
+
+        # Check if they match
+        if requests[0] != requests[1]:
+            return {
+                "success": True,
+                "mismatch": True,
+                "your_request": num_races,
+                "other_request": requests[1] if list(self.players.keys())[0] == player_id else requests[0],
+                "message": "Players requested different number of races. Please agree on the same number."
+            }
+
+        # Both players agreed - execute fast forward
+        self.fast_forward_ready = {}  # Clear ready state
+        result = self.fast_forward_races(player_id, num_races)
+        result["executed"] = True
+        return result
+
+    def cancel_fast_forward_request(self, player_id: str) -> bool:
+        """Cancel a fast forward request."""
+        if player_id in self.fast_forward_ready:
+            del self.fast_forward_ready[player_id]
+            return True
+        return False
+
+    def get_fast_forward_status(self) -> Dict:
+        """Get the current fast forward ready status for multiplayer."""
+        return {
+            "ready_players": {pid: races for pid, races in self.fast_forward_ready.items()},
+            "all_ready": len(self.fast_forward_ready) == len(self.players),
+            "player_count": len(self.players)
+        }
+
     def _quick_sim_single_race(self) -> Dict:
         """Simulate a single race quickly for fast forward mode."""
         track = self._tracks[self.current_race - 1]
@@ -3606,7 +3677,7 @@ class MultiplayerGameState:
                 MessageType.TEAM_UPDATE, MessagePriority.URGENT)
 
     def skip_transfer_window(self, player_id: str) -> bool:
-        """Skip the transfer window and start next season."""
+        """Skip the transfer window and proceed to sponsor selection for new season."""
         if self.phase != GamePhase.TRANSFER_WINDOW:
             return False
 
@@ -3615,8 +3686,26 @@ class MultiplayerGameState:
             if not self.all_players_ready():
                 return True  # Waiting for other player
 
-        self._start_new_season()
+        # Transition to sponsor selection for the new season
+        self._enter_post_transfer_sponsor_selection()
         return True
+
+    def _enter_post_transfer_sponsor_selection(self):
+        """Enter sponsor selection phase after transfer window."""
+        self.is_post_transfer_sponsor_selection = True
+        self.phase = GamePhase.SPONSOR_SELECTION
+        self.reset_ready()
+
+        # Generate new sponsors and reset selection flags for each player
+        for pid in self.players:
+            self.available_sponsors[pid] = self._generate_sponsors()
+            self.players[pid]["has_selected_sponsor"] = False
+
+            # Notify player
+            self._add_inbox_message(pid, "Choose Your New Sponsor",
+                f"It's time to secure sponsorship for Season {self.current_season + 1}!\n\n"
+                f"Review the available sponsors and choose the one that best fits your goals.",
+                MessageType.TEAM_UPDATE, MessagePriority.IMPORTANT)
 
     def sign_driver_transfer(self, player_id: str, driver_id: str, salary: float, years: int) -> bool:
         """Sign a driver during transfer window (can replace existing driver)."""
@@ -3666,7 +3755,7 @@ class MultiplayerGameState:
 
     def _replace_driver_in_ai_team(self, team_name: str, departing_driver: Dict):
         """Replace a departing driver in an AI team with a free agent."""
-        # Find a suitable free agent replacement
+        # Find free agents not already assigned to a team
         free_agents = [d for d in self._all_drivers
                       if d.get("is_free_agent") and d.get("player_id") is None
                       and d["id"] != departing_driver["id"]]
@@ -3674,21 +3763,9 @@ class MultiplayerGameState:
         if not free_agents:
             return  # No free agents available
 
-        # Sort by overall rating and pick a reasonable replacement
+        # Sort by overall rating and pick the best available
         free_agents.sort(key=lambda d: d.get("overall", 50), reverse=True)
-
-        # Pick a driver that's reasonably close in skill
-        departing_overall = departing_driver.get("overall", 70)
-        replacement = None
-        for fa in free_agents:
-            fa_overall = fa.get("overall", 50)
-            # Accept drivers within 15 points of the departing driver
-            if abs(fa_overall - departing_overall) <= 15:
-                replacement = fa
-                break
-
-        if not replacement:
-            replacement = free_agents[0]  # Just take the best available
+        replacement = free_agents[0]
 
         # Assign the replacement to the team
         replacement["team_name"] = team_name
@@ -4274,7 +4351,8 @@ class MultiplayerGameState:
             news_headlines=news_headlines,
             weather_forecast=self.weather.value if self.phase == GamePhase.TIRE_SELECTION else None,
             game_stopped=self.game_stopped,
-            stopped_by=self.stopped_by
+            stopped_by=self.stopped_by,
+            fast_forward_status=self.get_fast_forward_status() if is_multiplayer else None
         )
 
     def _build_team_info(self, team_data: Dict) -> TeamInfo:

@@ -466,8 +466,9 @@ class MultiplayerGameState:
         # Flag to track if we're in post-transfer sponsor selection (vs initial setup)
         self.is_post_transfer_sponsor_selection: bool = False
 
-        # Multiplayer fast forward ready tracking: player_id -> num_races requested (None = not ready)
-        self.fast_forward_ready: Dict[str, Optional[int]] = {}
+        # Multiplayer fast forward tracking
+        self.fast_forward_ready: Dict[str, bool] = {}  # player_id -> ready to enter FF menu
+        self.fast_forward_selection: Dict[str, Optional[int]] = {}  # player_id -> num_races selected
 
         # Game stopped flag for multiplayer sync
         self.game_stopped = False
@@ -541,6 +542,7 @@ class MultiplayerGameState:
             "available_sponsors": self.available_sponsors,
             "is_post_transfer_sponsor_selection": self.is_post_transfer_sponsor_selection,
             "fast_forward_ready": self.fast_forward_ready,
+            "fast_forward_selection": self.fast_forward_selection,
             "game_stopped": self.game_stopped,
             "stopped_by": self.stopped_by,
             "news_headlines": self.news_headlines,
@@ -602,6 +604,7 @@ class MultiplayerGameState:
         game.available_sponsors = data["available_sponsors"]
         game.is_post_transfer_sponsor_selection = data.get("is_post_transfer_sponsor_selection", False)
         game.fast_forward_ready = data.get("fast_forward_ready", {})
+        game.fast_forward_selection = data.get("fast_forward_selection", {})
         game.game_stopped = data["game_stopped"]
         game.stopped_by = data["stopped_by"]
         game.news_headlines = data["news_headlines"]
@@ -3410,43 +3413,71 @@ class MultiplayerGameState:
             "season_ended": self.phase == GamePhase.SEASON_END
         }
 
-    def request_multiplayer_fast_forward(self, player_id: str, num_races: int) -> Dict:
-        """Request fast forward in multiplayer. Both players must agree on same number."""
+    def toggle_fast_forward_ready(self, player_id: str) -> Dict:
+        """Toggle ready status for fast forward. Step 1 of the two-step process."""
         if self.phase not in [GamePhase.MAIN_MENU, GamePhase.RACE_RESULTS]:
             return {"success": False, "error": "Can only fast forward from main menu or race results"}
 
         if len(self.players) != 2:
             return {"success": False, "error": "Multiplayer fast forward requires 2 players"}
 
-        # Record this player's fast forward request
-        self.fast_forward_ready[player_id] = num_races
+        # Toggle ready status
+        current = self.fast_forward_ready.get(player_id, False)
+        self.fast_forward_ready[player_id] = not current
 
-        # Check if both players have requested fast forward with same num_races
-        all_ready = all(pid in self.fast_forward_ready for pid in self.players)
-        if not all_ready:
+        # If un-readying, also clear any selection
+        if not self.fast_forward_ready[player_id]:
+            self.fast_forward_selection.pop(player_id, None)
+
+        return {"success": True, "is_ready": self.fast_forward_ready[player_id]}
+
+    def select_fast_forward_races(self, player_id: str, num_races: int) -> Dict:
+        """Select number of races to fast forward. Step 2 - both must be ready first."""
+        if self.phase not in [GamePhase.MAIN_MENU, GamePhase.RACE_RESULTS]:
+            return {"success": False, "error": "Can only fast forward from main menu or race results"}
+
+        if len(self.players) != 2:
+            return {"success": False, "error": "Multiplayer fast forward requires 2 players"}
+
+        # Check if both players are ready
+        both_ready = all(self.fast_forward_ready.get(pid, False) for pid in self.players)
+        if not both_ready:
+            return {"success": False, "error": "Both players must be ready before selecting races"}
+
+        # Record this player's selection
+        self.fast_forward_selection[player_id] = num_races
+
+        # Check if both players have selected
+        both_selected = all(pid in self.fast_forward_selection for pid in self.players)
+        if not both_selected:
             return {
                 "success": True,
                 "waiting": True,
-                "message": "Waiting for other player to ready up for fast forward"
+                "your_selection": num_races,
+                "message": "Waiting for other player to select"
             }
 
-        # Get both players' requests
-        requests = [self.fast_forward_ready[pid] for pid in self.players]
+        # Get both selections
+        selections = [self.fast_forward_selection[pid] for pid in self.players]
 
         # Check if they match
-        if requests[0] != requests[1]:
+        if selections[0] != selections[1]:
+            other_pid = [pid for pid in self.players if pid != player_id][0]
             return {
                 "success": True,
                 "mismatch": True,
-                "your_request": num_races,
-                "other_request": requests[1] if list(self.players.keys())[0] == player_id else requests[0],
-                "message": "Players requested different number of races. Please agree on the same number."
+                "your_selection": num_races,
+                "other_selection": self.fast_forward_selection[other_pid],
+                "message": "Selections don't match. Please agree on the same number."
             }
 
         # Both players agreed - execute fast forward
+        agreed_races = num_races
         self.fast_forward_ready = {}  # Clear ready state
+        self.fast_forward_selection = {}  # Clear selections
+
         try:
-            result = self.fast_forward_races(player_id, num_races)
+            result = self.fast_forward_races(player_id, agreed_races)
             if not result.get("success"):
                 return {"success": False, "error": result.get("error", "Fast forward simulation failed")}
             result["executed"] = True
@@ -3456,18 +3487,18 @@ class MultiplayerGameState:
             traceback.print_exc()
             return {"success": False, "error": f"Fast forward error: {str(e)}"}
 
-    def cancel_fast_forward_request(self, player_id: str) -> bool:
-        """Cancel a fast forward request."""
-        if player_id in self.fast_forward_ready:
-            del self.fast_forward_ready[player_id]
-            return True
-        return False
+    def cancel_fast_forward(self, player_id: str) -> Dict:
+        """Cancel fast forward - clear ready and selection status."""
+        self.fast_forward_ready.pop(player_id, None)
+        self.fast_forward_selection.pop(player_id, None)
+        return {"success": True}
 
     def get_fast_forward_status(self) -> Dict:
-        """Get the current fast forward ready status for multiplayer."""
+        """Get the current fast forward status for multiplayer."""
         return {
-            "ready_players": {pid: races for pid, races in self.fast_forward_ready.items()},
-            "all_ready": len(self.fast_forward_ready) == len(self.players),
+            "ready_players": dict(self.fast_forward_ready),
+            "selections": dict(self.fast_forward_selection),
+            "both_ready": all(self.fast_forward_ready.get(pid, False) for pid in self.players) if len(self.players) == 2 else False,
             "player_count": len(self.players)
         }
 

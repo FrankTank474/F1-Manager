@@ -994,59 +994,192 @@ function renderMultiplayerFastForwardSection(state) {
 }
 
 /**
- * Fast Forward Menu Screen
+ * Fast Forward Menu Screen - Two-step process for multiplayer
  */
 function renderFastForwardMenu(container, state) {
-    stopRefreshInterval();  // Stop any existing refresh
+    stopRefreshInterval();
     const isMultiplayer = state.is_multiplayer;
     const racesRemaining = state.total_races - state.current_race + 1;
-    const ffStatus = state.fast_forward_status || { ready_players: {}, all_ready: false };
+    const ffStatus = state.fast_forward_status || { ready_players: {}, selections: {}, both_ready: false };
     const myPlayerId = state.your_player_id;
     const otherPlayer = state.players?.find(p => p.player_id !== myPlayerId);
-    const myRequest = ffStatus.ready_players?.[myPlayerId];
-    const otherRequest = otherPlayer ? ffStatus.ready_players?.[otherPlayer.player_id] : null;
-    const imWaiting = myRequest !== undefined && myRequest !== null;
-    const otherWaiting = otherRequest !== undefined && otherRequest !== null;
+
+    // Ready status
+    const imReady = ffStatus.ready_players?.[myPlayerId] || false;
+    const otherReady = otherPlayer ? (ffStatus.ready_players?.[otherPlayer.player_id] || false) : false;
+    const bothReady = imReady && otherReady;
+
+    // Selection status (only matters after both ready)
+    const mySelection = ffStatus.selections?.[myPlayerId];
+    const otherSelection = otherPlayer ? ffStatus.selections?.[otherPlayer.player_id] : null;
+    const iHaveSelected = mySelection !== undefined && mySelection !== null;
+    const otherHasSelected = otherSelection !== undefined && otherSelection !== null;
 
     const getRacesLabel = (num) => {
         if (num === -1) return 'Full Season';
         return `${num} Races`;
     };
 
-    // Build multiplayer status section
-    let multiplayerStatus = '';
-    if (isMultiplayer) {
-        if (imWaiting && otherWaiting && myRequest !== otherRequest) {
-            multiplayerStatus = `
+    // For single player, just show the options directly
+    if (!isMultiplayer) {
+        container.innerHTML = `
+            <div class="game-container">
+                <div class="game-header">
+                    <button class="btn btn-secondary back-btn" id="ff-back-btn">Back to Hub</button>
+                    <h1>Fast Forward Season</h1>
+                </div>
+                <div class="game-content">
+                    <div class="ff-menu-layout">
+                        <div class="ff-menu-sidebar">
+                            <div class="ff-season-card card">
+                                <h3>Season ${state.current_season}</h3>
+                                <div class="ff-progress-bar">
+                                    <div class="ff-progress-fill" style="width: ${((state.current_race - 1) / state.total_races) * 100}%"></div>
+                                </div>
+                                <p class="ff-progress-text">Race ${state.current_race} of ${state.total_races}</p>
+                                <p class="text-secondary">${racesRemaining} race${racesRemaining !== 1 ? 's' : ''} remaining</p>
+                            </div>
+                        </div>
+                        <div class="ff-menu-main">
+                            <div class="ff-menu-options">
+                                <h3>Select Races to Simulate</h3>
+                                <div class="ff-option-grid">
+                                    <button class="ff-option-btn" data-races="3" ${racesRemaining < 3 ? 'disabled' : ''}>
+                                        <span class="ff-option-num">3</span>
+                                        <span class="ff-option-label">Races</span>
+                                    </button>
+                                    <button class="ff-option-btn" data-races="5" ${racesRemaining < 5 ? 'disabled' : ''}>
+                                        <span class="ff-option-num">5</span>
+                                        <span class="ff-option-label">Races</span>
+                                    </button>
+                                    <button class="ff-option-btn" data-races="10" ${racesRemaining < 10 ? 'disabled' : ''}>
+                                        <span class="ff-option-num">10</span>
+                                        <span class="ff-option-label">Races</span>
+                                    </button>
+                                    <button class="ff-option-btn full-season" data-races="-1">
+                                        <span class="ff-option-num">${racesRemaining}</span>
+                                        <span class="ff-option-label">Full Season</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.getElementById('ff-back-btn')?.addEventListener('click', () => renderGameScreen(container, state));
+
+        document.querySelectorAll('.ff-option-btn:not([disabled])').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const numRaces = parseInt(btn.dataset.races);
+                const racesText = numRaces === -1 ? 'the rest of the season' : `${numRaces} races`;
+                if (!confirm(`Fast forward ${racesText}? AI will control your team.`)) return;
+
+                setButtonLoading(btn, true);
+                try {
+                    const response = await api.post(`/gameplay/${state.game_id}/fast-forward?num_races=${numRaces}`);
+                    renderFastForwardResults(container, response.state, response.fast_forward_results);
+                } catch (error) {
+                    showAlert(container.querySelector('.ff-menu-main'), error.message, 'error');
+                    setButtonLoading(btn, false);
+                }
+            });
+        });
+        return;
+    }
+
+    // MULTIPLAYER - Two-step process
+    let statusSection = '';
+    let actionSection = '';
+
+    if (!bothReady) {
+        // Step 1: Waiting for both players to ready up
+        statusSection = `
+            <div class="ff-ready-section">
+                <h3>Ready to Fast Forward?</h3>
+                <p class="text-secondary mb-lg">Both players must click Ready before selecting races.</p>
+
+                <div class="ff-ready-status">
+                    <div class="ff-ready-player ${imReady ? 'ready' : ''}">
+                        <span class="ff-ready-icon">${imReady ? '✓' : '○'}</span>
+                        <span>You</span>
+                    </div>
+                    <div class="ff-ready-player ${otherReady ? 'ready' : ''}">
+                        <span class="ff-ready-icon">${otherReady ? '✓' : '○'}</span>
+                        <span>${escapeHtml(otherPlayer?.username || 'Opponent')}</span>
+                    </div>
+                </div>
+
+                <button class="btn ${imReady ? 'btn-secondary' : 'btn-primary'} btn-lg mt-lg" id="ff-ready-btn">
+                    ${imReady ? 'Cancel Ready' : 'Ready'}
+                </button>
+            </div>
+        `;
+    } else {
+        // Step 2: Both ready - now select races
+        let selectionStatus = '';
+
+        if (iHaveSelected && otherHasSelected && mySelection !== otherSelection) {
+            selectionStatus = `
                 <div class="ff-menu-status mismatch">
-                    <h4>Selection Mismatch</h4>
-                    <p>You selected: <strong>${getRacesLabel(myRequest)}</strong></p>
-                    <p>${escapeHtml(otherPlayer?.username || 'Opponent')} selected: <strong>${getRacesLabel(otherRequest)}</strong></p>
-                    <p class="text-secondary mt-sm">Both players must select the same option to proceed.</p>
-                    <button class="btn btn-secondary mt-md" id="ff-cancel-btn">Change Selection</button>
+                    <h4>Selection Mismatch!</h4>
+                    <p>You: <strong>${getRacesLabel(mySelection)}</strong></p>
+                    <p>${escapeHtml(otherPlayer?.username || 'Opponent')}: <strong>${getRacesLabel(otherSelection)}</strong></p>
+                    <p class="text-secondary mt-sm">Select the same option to proceed.</p>
+                    <button class="btn btn-secondary mt-md" id="ff-clear-selection-btn">Change Selection</button>
                 </div>
             `;
-        } else if (imWaiting) {
-            multiplayerStatus = `
+        } else if (iHaveSelected && !otherHasSelected) {
+            selectionStatus = `
                 <div class="ff-menu-status waiting">
-                    <h4>Waiting for Opponent</h4>
-                    <p>You selected: <strong>${getRacesLabel(myRequest)}</strong></p>
+                    <h4>You selected: ${getRacesLabel(mySelection)}</h4>
                     <div class="waiting-opponent mt-md">
                         <div class="spinner-small"></div>
-                        <span>Waiting for ${escapeHtml(otherPlayer?.username || 'opponent')} to select...</span>
+                        <span>Waiting for ${escapeHtml(otherPlayer?.username || 'opponent')}...</span>
                     </div>
-                    <button class="btn btn-secondary mt-md" id="ff-cancel-btn">Cancel</button>
+                    <button class="btn btn-secondary mt-md" id="ff-clear-selection-btn">Change Selection</button>
                 </div>
             `;
-        } else if (otherWaiting) {
-            multiplayerStatus = `
+        } else if (!iHaveSelected && otherHasSelected) {
+            selectionStatus = `
                 <div class="ff-menu-status opponent-waiting">
-                    <h4>${escapeHtml(otherPlayer?.username || 'Opponent')} Wants to Fast Forward</h4>
-                    <p>They selected: <strong class="text-warning">${getRacesLabel(otherRequest)}</strong></p>
-                    <p class="text-secondary">Click the same option to agree and start simulation!</p>
+                    <h4>${escapeHtml(otherPlayer?.username || 'Opponent')} selected: ${getRacesLabel(otherSelection)}</h4>
+                    <p class="text-secondary">Click the same option to start simulation!</p>
                 </div>
             `;
         }
+
+        statusSection = `
+            <div class="ff-both-ready-banner">
+                <span class="ff-ready-icon">✓</span> Both players ready!
+            </div>
+            ${selectionStatus}
+        `;
+
+        actionSection = `
+            <div class="ff-menu-options">
+                <h3>Select Races to Simulate</h3>
+                <div class="ff-option-grid">
+                    <button class="ff-option-btn ${otherSelection === 3 ? 'highlighted' : ''}" data-races="3" ${racesRemaining < 3 || iHaveSelected ? 'disabled' : ''}>
+                        <span class="ff-option-num">3</span>
+                        <span class="ff-option-label">Races</span>
+                    </button>
+                    <button class="ff-option-btn ${otherSelection === 5 ? 'highlighted' : ''}" data-races="5" ${racesRemaining < 5 || iHaveSelected ? 'disabled' : ''}>
+                        <span class="ff-option-num">5</span>
+                        <span class="ff-option-label">Races</span>
+                    </button>
+                    <button class="ff-option-btn ${otherSelection === 10 ? 'highlighted' : ''}" data-races="10" ${racesRemaining < 10 || iHaveSelected ? 'disabled' : ''}>
+                        <span class="ff-option-num">10</span>
+                        <span class="ff-option-label">Races</span>
+                    </button>
+                    <button class="ff-option-btn full-season ${otherSelection === -1 ? 'highlighted' : ''}" data-races="-1" ${iHaveSelected ? 'disabled' : ''}>
+                        <span class="ff-option-num">${racesRemaining}</span>
+                        <span class="ff-option-label">Full Season</span>
+                    </button>
+                </div>
+            </div>
+        `;
     }
 
     container.innerHTML = `
@@ -1055,7 +1188,6 @@ function renderFastForwardMenu(container, state) {
                 <button class="btn btn-secondary back-btn" id="ff-back-btn">Back to Hub</button>
                 <h1>Fast Forward Season</h1>
             </div>
-
             <div class="game-content">
                 <div class="ff-menu-layout">
                     <div class="ff-menu-sidebar">
@@ -1067,46 +1199,19 @@ function renderFastForwardMenu(container, state) {
                             <p class="ff-progress-text">Race ${state.current_race} of ${state.total_races}</p>
                             <p class="text-secondary">${racesRemaining} race${racesRemaining !== 1 ? 's' : ''} remaining</p>
                         </div>
-
                         <div class="ff-info-card card">
                             <h4>How it works</h4>
                             <ul class="ff-info-list">
-                                <li>AI controls pit strategy for all teams</li>
-                                <li>You earn prize money and points normally</li>
-                                <li>Results shown after simulation</li>
-                                ${isMultiplayer ? '<li>Both players must select same option</li>' : ''}
+                                <li>Both players click Ready</li>
+                                <li>Both select same number of races</li>
+                                <li>AI simulates races for both teams</li>
+                                <li>View results together</li>
                             </ul>
                         </div>
                     </div>
-
                     <div class="ff-menu-main">
-                        ${multiplayerStatus}
-
-                        <div class="ff-menu-options">
-                            <h3>Select Races to Simulate</h3>
-                            <div class="ff-option-grid">
-                                <button class="ff-option-btn ${otherRequest === 3 ? 'highlighted' : ''} ${imWaiting ? 'disabled-look' : ''}" data-races="3" ${racesRemaining < 3 || imWaiting ? 'disabled' : ''}>
-                                    <span class="ff-option-num">3</span>
-                                    <span class="ff-option-label">Races</span>
-                                    ${racesRemaining < 3 ? '<span class="ff-option-note">Not enough races</span>' : ''}
-                                </button>
-                                <button class="ff-option-btn ${otherRequest === 5 ? 'highlighted' : ''} ${imWaiting ? 'disabled-look' : ''}" data-races="5" ${racesRemaining < 5 || imWaiting ? 'disabled' : ''}>
-                                    <span class="ff-option-num">5</span>
-                                    <span class="ff-option-label">Races</span>
-                                    ${racesRemaining < 5 ? '<span class="ff-option-note">Not enough races</span>' : ''}
-                                </button>
-                                <button class="ff-option-btn ${otherRequest === 10 ? 'highlighted' : ''} ${imWaiting ? 'disabled-look' : ''}" data-races="10" ${racesRemaining < 10 || imWaiting ? 'disabled' : ''}>
-                                    <span class="ff-option-num">10</span>
-                                    <span class="ff-option-label">Races</span>
-                                    ${racesRemaining < 10 ? '<span class="ff-option-note">Not enough races</span>' : ''}
-                                </button>
-                                <button class="ff-option-btn full-season ${otherRequest === -1 ? 'highlighted' : ''} ${imWaiting ? 'disabled-look' : ''}" data-races="-1" ${imWaiting ? 'disabled' : ''}>
-                                    <span class="ff-option-num">${racesRemaining}</span>
-                                    <span class="ff-option-label">Full Season</span>
-                                    <span class="ff-option-note">Complete remaining races</span>
-                                </button>
-                            </div>
-                        </div>
+                        ${statusSection}
+                        ${actionSection}
                     </div>
                 </div>
             </div>
@@ -1114,16 +1219,20 @@ function renderFastForwardMenu(container, state) {
     `;
 
     // Event listeners
-    document.getElementById('ff-back-btn')?.addEventListener('click', () => {
+    document.getElementById('ff-back-btn')?.addEventListener('click', async () => {
         stopRefreshInterval();
+        // Cancel any ready/selection state when leaving
+        try {
+            await api.post(`/gameplay/${state.game_id}/cancel-fast-forward`);
+        } catch (e) { /* ignore */ }
         renderGameScreen(container, state);
     });
 
-    document.getElementById('ff-cancel-btn')?.addEventListener('click', async () => {
-        const btn = document.getElementById('ff-cancel-btn');
+    document.getElementById('ff-ready-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('ff-ready-btn');
         setButtonLoading(btn, true);
         try {
-            const response = await api.post(`/gameplay/${state.game_id}/cancel-fast-forward`);
+            const response = await api.post(`/gameplay/${state.game_id}/fast-forward-ready`);
             renderFastForwardMenu(container, response.state);
         } catch (error) {
             showAlert(container.querySelector('.ff-menu-main'), error.message, 'error');
@@ -1131,48 +1240,43 @@ function renderFastForwardMenu(container, state) {
         }
     });
 
-    // Fast forward option buttons
+    document.getElementById('ff-clear-selection-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('ff-clear-selection-btn');
+        setButtonLoading(btn, true);
+        try {
+            const response = await api.post(`/gameplay/${state.game_id}/cancel-fast-forward`);
+            // Re-ready after clearing
+            const response2 = await api.post(`/gameplay/${response.state.game_id}/fast-forward-ready`);
+            renderFastForwardMenu(container, response2.state);
+        } catch (error) {
+            showAlert(container.querySelector('.ff-menu-main'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
+
+    // Race selection buttons (only when both ready)
     document.querySelectorAll('.ff-option-btn:not([disabled])').forEach(btn => {
         btn.addEventListener('click', async () => {
             const numRaces = parseInt(btn.dataset.races);
-
-            if (isMultiplayer) {
-                // Multiplayer - need both players to agree
-                setButtonLoading(btn, true);
-                try {
-                    const response = await api.post(`/gameplay/${state.game_id}/multiplayer-fast-forward?num_races=${numRaces}`);
-                    if (response.executed) {
-                        stopRefreshInterval();
-                        renderFastForwardResults(container, response.state, response.fast_forward_results);
-                    } else {
-                        renderFastForwardMenu(container, response.state);
-                    }
-                } catch (error) {
-                    console.error('Fast forward error:', error);
-                    showAlert(container.querySelector('.ff-menu-main'), error.message || 'Fast forward request failed', 'error');
-                    setButtonLoading(btn, false);
-                }
-            } else {
-                // Single player - confirm and execute
-                const racesText = numRaces === -1 ? 'the rest of the season' : `${numRaces} races`;
-                if (!confirm(`Fast forward ${racesText}? AI will control your team during these races.`)) {
-                    return;
-                }
-                setButtonLoading(btn, true);
-                try {
-                    const response = await api.post(`/gameplay/${state.game_id}/fast-forward?num_races=${numRaces}`);
+            setButtonLoading(btn, true);
+            try {
+                const response = await api.post(`/gameplay/${state.game_id}/fast-forward-select?num_races=${numRaces}`);
+                if (response.executed) {
+                    stopRefreshInterval();
                     renderFastForwardResults(container, response.state, response.fast_forward_results);
-                } catch (error) {
-                    console.error('Fast forward error:', error);
-                    showAlert(container.querySelector('.ff-menu-main'), error.message || 'Fast forward failed', 'error');
-                    setButtonLoading(btn, false);
+                } else {
+                    renderFastForwardMenu(container, response.state);
                 }
+            } catch (error) {
+                console.error('Fast forward select error:', error);
+                showAlert(container.querySelector('.ff-menu-main'), error.message || 'Selection failed', 'error');
+                setButtonLoading(btn, false);
             }
         });
     });
 
-    // Auto-refresh in multiplayer when waiting for opponent
-    if (isMultiplayer && (imWaiting || otherWaiting)) {
+    // Auto-refresh when waiting for opponent
+    if (isMultiplayer && (imReady || iHaveSelected)) {
         startRefreshInterval(state.game_id, container, renderFastForwardMenu);
     }
 }

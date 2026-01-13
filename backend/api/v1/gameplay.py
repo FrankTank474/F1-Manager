@@ -519,21 +519,38 @@ async def fast_forward_races(
     }
 
 
-@router.post("/{game_id}/multiplayer-fast-forward")
-async def multiplayer_fast_forward(
+@router.post("/{game_id}/fast-forward-ready")
+async def toggle_fast_forward_ready(
+    game_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Toggle ready status for multiplayer fast forward. Step 1."""
+    game_state = await get_game_state(game_id, user_id)
+
+    result = game_state.toggle_fast_forward_ready(user_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Failed to toggle ready"))
+
+    await save_game_state(game_id)
+
+    return {
+        "state": game_state.get_state_response(user_id),
+        "is_ready": result.get("is_ready")
+    }
+
+
+@router.post("/{game_id}/fast-forward-select")
+async def select_fast_forward_races(
     game_id: str,
     num_races: int = 1,
     user_id: str = Depends(get_current_user_id),
 ):
-    """Request multiplayer fast forward. Both players must agree on same race count."""
+    """Select number of races for multiplayer fast forward. Step 2 - both must be ready."""
     game_state = await get_game_state(game_id, user_id)
 
-    if game_state.phase not in [GamePhase.MAIN_MENU, GamePhase.RACE_RESULTS]:
-        raise HTTPException(status_code=400, detail="Can only fast forward from main menu or race results")
-
-    result = game_state.request_multiplayer_fast_forward(user_id, num_races)
+    result = game_state.select_fast_forward_races(user_id, num_races)
     if not result.get("success"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Fast forward failed"))
+        raise HTTPException(status_code=400, detail=result.get("error", "Selection failed"))
 
     await save_game_state(game_id)
 
@@ -550,8 +567,8 @@ async def multiplayer_fast_forward(
         "state": game_state.get_state_response(user_id),
         "waiting": result.get("waiting", False),
         "mismatch": result.get("mismatch", False),
-        "your_request": result.get("your_request"),
-        "other_request": result.get("other_request"),
+        "your_selection": result.get("your_selection"),
+        "other_selection": result.get("other_selection"),
         "message": result.get("message")
     }
 
@@ -561,10 +578,10 @@ async def cancel_fast_forward(
     game_id: str,
     user_id: str = Depends(get_current_user_id),
 ):
-    """Cancel a pending multiplayer fast forward request."""
+    """Cancel fast forward - clear ready and selection status."""
     game_state = await get_game_state(game_id, user_id)
 
-    game_state.cancel_fast_forward_request(user_id)
+    game_state.cancel_fast_forward(user_id)
     await save_game_state(game_id)
 
     return {

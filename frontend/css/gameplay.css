@@ -3196,3 +3196,79 @@
         max-width: 200px;
     }
 }
+
+/* ==================== SEASON END STANDINGS ==================== */
+
+.standings-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+    gap: var(--space-lg);
+}
+
+.standings-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: var(--space-md);
+}
+
+.standings-table th,
+.standings-table td {
+    padding: var(--space-sm) var(--space-md);
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.standings-table th {
+    background: var(--bg-tertiary);
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: var(--font-sm);
+    text-transform: uppercase;
+}
+
+.standings-table tbody tr:hover {
+    background: var(--bg-tertiary);
+}
+
+.standings-table .player-row {
+    background: rgba(231, 76, 60, 0.1);
+}
+
+.standings-table .player-row:hover {
+    background: rgba(231, 76, 60, 0.15);
+}
+
+.champion-card {
+    background: linear-gradient(135deg, rgba(241, 196, 15, 0.15), rgba(241, 196, 15, 0.05));
+    border: 2px solid var(--warning);
+}
+
+.champions-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-xl);
+}
+
+.champion-name {
+    font-size: var(--font-xl);
+    font-weight: 700;
+    color: var(--warning);
+    margin: var(--space-sm) 0;
+}
+
+.season-position {
+    font-size: var(--font-3xl);
+    font-weight: 700;
+    color: var(--primary);
+}
+
+@media (max-width: 768px) {
+    .standings-container {
+        grid-template-columns: 1fr;
+    }
+
+    .champions-grid {
+        grid-template-columns: 1fr;
+        gap: var(--space-lg);
+    }
+}

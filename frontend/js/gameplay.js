@@ -3394,6 +3394,8 @@ function renderSeasonEnd(container, state) {
     const driverChamp = state.driver_standings?.[0];
     const constructorChamp = state.constructor_standings?.[0];
     const playerPosition = state.constructor_standings?.find(s => s.player_id === state.your_player_id)?.position || 'N/A';
+    const isMultiplayer = state.is_multiplayer;
+    const imReady = state.players?.find(p => p.player_id === state.your_player_id)?.is_ready;
 
     container.innerHTML = `
         <div class="game-container">
@@ -3401,8 +3403,9 @@ function renderSeasonEnd(container, state) {
                 <h1>Season ${state.current_season} Complete!</h1>
             </div>
 
-            <div class="game-content text-center">
-                <div class="card champion-card mb-xl">
+            <div class="game-content">
+                <!-- Champions Banner -->
+                <div class="card champion-card mb-lg text-center">
                     <h2>Champions</h2>
                     <div class="champions-grid mt-lg">
                         <div>
@@ -3418,16 +3421,92 @@ function renderSeasonEnd(container, state) {
                     </div>
                 </div>
 
-                <div class="card mb-xl">
+                <!-- Your Team Result -->
+                <div class="card mb-lg text-center">
                     <h3>Your Team Finished</h3>
                     <p class="season-position">${playerPosition}${getOrdinalSuffix(playerPosition)}</p>
                     <p class="text-secondary">${state.player_team?.season_points || 0} points</p>
                 </div>
 
-                <a href="#/games" class="btn btn-primary btn-lg">Return to Lobby</a>
+                <!-- Full Standings -->
+                <div class="standings-container">
+                    <div class="card mb-lg">
+                        <h3>Drivers' Championship</h3>
+                        <table class="standings-table">
+                            <thead>
+                                <tr>
+                                    <th>Pos</th>
+                                    <th>Driver</th>
+                                    <th>Team</th>
+                                    <th>Points</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${(state.driver_standings || []).map((d, i) => `
+                                    <tr class="${d.is_player_driver ? 'player-row' : ''}">
+                                        <td>${i + 1}</td>
+                                        <td>${escapeHtml(d.driver_name)}</td>
+                                        <td>${escapeHtml(d.team_name)}</td>
+                                        <td><strong>${d.points}</strong></td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="card mb-lg">
+                        <h3>Constructors' Championship</h3>
+                        <table class="standings-table">
+                            <thead>
+                                <tr>
+                                    <th>Pos</th>
+                                    <th>Team</th>
+                                    <th>Points</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${(state.constructor_standings || []).map((c, i) => `
+                                    <tr class="${c.player_id ? 'player-row' : ''}">
+                                        <td>${i + 1}</td>
+                                        <td>${escapeHtml(c.team_name)}</td>
+                                        <td><strong>${c.points}</strong></td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                ${isMultiplayer && imReady ? `
+                    <div class="waiting-opponent mt-lg text-center">
+                        <div class="spinner-small"></div>
+                        <span>Waiting for other player...</span>
+                    </div>
+                ` : `
+                    <button class="btn btn-primary btn-lg btn-block mt-lg" id="continue-to-transfers-btn">
+                        Continue to Driver Signings
+                    </button>
+                `}
             </div>
         </div>
     `;
+
+    document.getElementById('continue-to-transfers-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('continue-to-transfers-btn');
+        setButtonLoading(btn, true);
+        try {
+            const response = await api.post(`/gameplay/${state.game_id}/proceed-from-season-end`);
+            renderGameScreen(container, response);
+        } catch (error) {
+            showAlert(container.querySelector('.game-content'), error.message, 'error');
+            setButtonLoading(btn, false);
+        }
+    });
+
+    // Auto-refresh for multiplayer
+    if (isMultiplayer && imReady) {
+        startRefreshInterval(state.game_id, container);
+    }
 }
 
 /**

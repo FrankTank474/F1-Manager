@@ -2096,7 +2096,11 @@ class MultiplayerGameState:
         tire = entry["tire"]
 
         car_factor = (100 - calc_car_overall(car)) * 0.030
-        driver_factor = (100 - driver["stats"]["pace"]) * 0.040
+
+        # Pace has higher impact in qualifying
+        pace_multiplier = 0.055 if is_qualifying else 0.040
+        driver_factor = (100 - driver["stats"]["pace"]) * pace_multiplier
+
         tire_perf = tire.performance
         tire_factor = (1.0 - tire_perf) * 3.5
 
@@ -2113,13 +2117,16 @@ class MultiplayerGameState:
 
         mech_penalty = random.uniform(0.2, 0.5) if modifiers.get("mechanical_issue", False) else 0
 
+        # Weather factor - wet_skill has significant impact in rain
         weather_factor = 0
         if weather == Weather.LIGHT_RAIN:
             if tire.compound in ["soft", "medium", "hard"]:
-                weather_factor = 5.0 - (driver["stats"]["wet_skill"] * 0.03)
+                # Higher wet_skill = faster in rain (0.06 multiplier for bigger impact)
+                weather_factor = 6.0 - (driver["stats"]["wet_skill"] * 0.06)
         elif weather == Weather.HEAVY_RAIN:
             if tire.compound in ["soft", "medium", "hard"]:
-                weather_factor = 15.0 - (driver["stats"]["wet_skill"] * 0.05)
+                # Much bigger impact in heavy rain (0.12 multiplier)
+                weather_factor = 18.0 - (driver["stats"]["wet_skill"] * 0.12)
 
         # Morale effect
         morale_factor = (driver.get("morale", 75) - 75) * -0.002
@@ -3683,7 +3690,7 @@ class MultiplayerGameState:
             entry["position"] = i + 1
 
     def _end_season(self):
-        """End of season processing."""
+        """End of season processing - stays in SEASON_END phase to show standings."""
         # Award prize money to player teams
         for pid, team in self.player_teams.items():
             pos = next((cs["position"] for cs in self._constructor_standings if cs["team_name"] == team["name"]), 11)
@@ -3726,9 +3733,24 @@ class MultiplayerGameState:
         for _ in range(3):  # Multiple upgrade rounds
             self._ai_teams_upgrade()
 
+        # Stay in SEASON_END phase to show final standings
+        # Player must click Continue to proceed to transfer window
+        self.reset_ready()
+
+    def proceed_from_season_end(self, player_id: str) -> bool:
+        """Proceed from season end standings to transfer window."""
+        if self.phase != GamePhase.SEASON_END:
+            return False
+
+        # Handle multiplayer - both must be ready
+        if len(self.players) == 2:
+            self.mark_ready(player_id, True)
+            if not self.all_players_ready():
+                return True  # Waiting for other player
+            self.reset_ready()
+
         # Go to transfer window phase
         self.phase = GamePhase.TRANSFER_WINDOW
-        self.reset_ready()
 
         # Notify players about transfer window
         for pid in self.players:
@@ -3739,6 +3761,8 @@ class MultiplayerGameState:
                 f"You can now sign new drivers. Higher prestige attracts better talent.\n"
                 f"Budget available: ${team['budget']:.1f}M",
                 MessageType.TEAM_UPDATE, MessagePriority.URGENT)
+
+        return True
 
     def skip_transfer_window(self, player_id: str) -> bool:
         """Skip the transfer window and proceed to sponsor selection for new season."""

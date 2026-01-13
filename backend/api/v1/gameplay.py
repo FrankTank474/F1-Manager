@@ -496,6 +496,25 @@ async def advance_to_next_race(
     return game_state.get_state_response(user_id)
 
 
+@router.post("/{game_id}/proceed-from-season-end", response_model=GameStateResponse)
+async def proceed_from_season_end(
+    game_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Proceed from season end standings to transfer window."""
+    game_state = await get_game_state(game_id, user_id)
+
+    if game_state.phase != GamePhase.SEASON_END:
+        raise HTTPException(status_code=400, detail="Not in season end phase")
+
+    success = game_state.proceed_from_season_end(user_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to proceed")
+
+    await save_game_state(game_id)
+    return game_state.get_state_response(user_id)
+
+
 @router.post("/{game_id}/fast-forward")
 async def fast_forward_races(
     game_id: str,

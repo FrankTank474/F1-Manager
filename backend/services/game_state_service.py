@@ -1767,11 +1767,11 @@ class MultiplayerGameState:
             self._build_final_qualifying_grid(is_for_sprint=False)
             self.phase = GamePhase.TIRE_SELECTION
             self.player_tire_selections = {pid: {} for pid in self.players}
-            # Set random weather for race start (20% light rain, 10% heavy rain)
+            # Set random weather for race start (10% light rain, 5% heavy rain)
             weather_roll = random.random()
-            if weather_roll < 0.10:
+            if weather_roll < 0.05:
                 self.weather = Weather.HEAVY_RAIN
-            elif weather_roll < 0.30:
+            elif weather_roll < 0.15:
                 self.weather = Weather.LIGHT_RAIN
             else:
                 self.weather = Weather.DRY
@@ -2445,7 +2445,7 @@ class MultiplayerGameState:
         track = self._tracks[self.current_race - 1]
 
         # Weather change
-        if random.random() < 0.005:
+        if random.random() < 0.002:
             if self.weather == Weather.DRY:
                 self.weather = Weather.LIGHT_RAIN
                 self.race_events.append({"lap": self.current_lap, "event_type": "weather", "description": "Light rain starting!"})
@@ -3388,7 +3388,7 @@ class MultiplayerGameState:
             if self.current_race > len(self._tracks):
                 break
 
-            race_result = self._quick_sim_single_race()
+            race_result = self._quick_sim_single_race(player_id)
             results_summary.append(race_result)
 
             # Move to next race
@@ -3502,7 +3502,7 @@ class MultiplayerGameState:
             "player_count": len(self.players)
         }
 
-    def _quick_sim_single_race(self) -> Dict:
+    def _quick_sim_single_race(self, player_id: str) -> Dict:
         """Simulate a single race quickly for fast forward mode."""
         track = self._tracks[self.current_race - 1]
 
@@ -3522,11 +3522,11 @@ class MultiplayerGameState:
         self._run_qualifying_session("Q3")
         self._build_final_qualifying_grid(is_for_sprint=False)
 
-        # Set random weather
+        # Set random weather (reduced rain probability)
         weather_roll = random.random()
-        if weather_roll < 0.10:
+        if weather_roll < 0.05:
             self.weather = Weather.HEAVY_RAIN
-        elif weather_roll < 0.30:
+        elif weather_roll < 0.15:
             self.weather = Weather.LIGHT_RAIN
         else:
             self.weather = Weather.DRY
@@ -3599,9 +3599,10 @@ class MultiplayerGameState:
         # Process results (use _finish_race but don't change phase permanently)
         self._finish_race()
 
-        # Get player results
+        # Get player results (only for the requesting player)
         player_results = []
-        for pid, team in self.player_teams.items():
+        team = self.player_teams.get(player_id)
+        if team:
             for driver in team["drivers"]:
                 entry = next((e for e in self.race_entries if e["driver_name"] == driver["name"]), None)
                 if entry:
@@ -3629,7 +3630,7 @@ class MultiplayerGameState:
         track = self._tracks[self.current_race - 1]
 
         # Weather changes
-        if random.random() < 0.02:
+        if random.random() < 0.005:
             if self.weather == Weather.DRY:
                 self.weather = Weather.LIGHT_RAIN
             elif self.weather == Weather.LIGHT_RAIN:

@@ -48,8 +48,8 @@ except ImportError as e:
 POINTS_SYSTEM = {1: 30, 2: 26, 3: 22, 4: 18, 5: 16, 6: 14, 7: 12, 8: 10, 9: 8, 10: 6, 11: 5, 12: 4, 13: 3, 14: 2, 15: 1}
 
 RACE_PRIZE_MONEY = {
-    1: 8.0, 2: 6.0, 3: 5.0, 4: 4.0, 5: 3.5, 6: 3.0, 7: 2.5, 8: 2.0, 9: 1.75, 10: 1.5,
-    11: 1.25, 12: 1.0, 13: 0.9, 14: 0.8, 15: 0.7
+    1: 12.0, 2: 9.0, 3: 7.5, 4: 6.0, 5: 5.0, 6: 4.5, 7: 4.0, 8: 3.5, 9: 3.0, 10: 2.5,
+    11: 2.0, 12: 1.75, 13: 1.5, 14: 1.25, 15: 1.0
 }
 
 SEASON_PRIZE_MONEY = {
@@ -2359,6 +2359,15 @@ class MultiplayerGameState:
         if not is_wet and has_wet_tires and entry["pit_stops"] > 0:
             return True
 
+        # One lap before race end - check if 2 different compounds requirement is met
+        # Wet/inters count towards requirement (wets->inters or inters->softs is valid)
+        if self.current_lap == self.total_laps - 1:
+            used = entry.get("used_compounds", set())
+            if len(used) < 2:
+                # Force pit decision - must use a different compound
+                entry["mandatory_compound_pit"] = True
+                return True
+
         return False
 
     def _check_all_pit_decisions(self):
@@ -2583,6 +2592,23 @@ class MultiplayerGameState:
                 else:
                     new_compound = "soft" if "soft" in available else available[0]
 
+            # Mandatory 2-compound rule check on second-to-last lap
+            # Wet/inters count towards requirement (wets->inters or inters->softs is valid)
+            if self.current_lap == self.total_laps - 1:
+                if len(used) < 2:
+                    should_pit = True
+                    # Must use a different compound
+                    current_compound = entry["tire"].compound
+                    # If on wet tires, can go to inters; if on inters, can go to softs
+                    if current_compound == "wet":
+                        new_compound = "intermediate"
+                    elif current_compound == "intermediate":
+                        new_compound = "soft"
+                    else:
+                        # On dry tires, pick a different dry compound
+                        available = [c for c in dry_compounds if c != current_compound]
+                        new_compound = available[0] if available else "medium"
+
             if should_pit:
                 entry["tire"] = TireState(new_compound)
                 entry["total_time"] += track["pit_loss_time"]
@@ -2602,11 +2628,8 @@ class MultiplayerGameState:
 
         for entry in self.race_entries:
             if entry["player_id"] == player_id and entry["driver"]["id"] == driver_id and not entry["dnf"]:
-                used = entry.get("used_compounds", set())
-                # Check if compound already used (wet weather tires exempt)
-                if compound in used and compound not in ["intermediate", "wet"]:
-                    return {"success": False, "error": f"Already used {compound} tires - must use different compound"}
-
+                # Allow pitting onto any compound (same compound allowed)
+                # Track used compounds for the 2-compound requirement at race end
                 entry["tire"] = TireState(compound)
                 entry["total_time"] += track["pit_loss_time"]
                 entry["pit_stops"] += 1
@@ -2628,18 +2651,20 @@ class MultiplayerGameState:
         self.race_finished = True
         self.phase = GamePhase.RACE_RESULTS
 
-        # Mandatory 2 pit stops rule - 30 second penalty for each missing stop
-        MIN_PIT_STOPS = 2
+        # Mandatory 2 different compounds rule - 30 second penalty if not met
+        # Wet/inters count towards requirement (wets->inters or inters->softs is valid)
+        MIN_COMPOUNDS = 2
         for entry in self.race_entries:
             if not entry["dnf"]:
-                pit_deficit = max(0, MIN_PIT_STOPS - entry["pit_stops"])
-                if pit_deficit > 0:
-                    penalty = pit_deficit * 30  # 30 second penalty per missing stop
+                used = entry.get("used_compounds", set())
+                compound_deficit = max(0, MIN_COMPOUNDS - len(used))
+                if compound_deficit > 0:
+                    penalty = 30  # 30 second penalty for not using 2 different compounds
                     entry["total_time"] += penalty
-                    entry["pit_penalty"] = penalty
+                    entry["compound_penalty"] = penalty
                     self.race_events.append({
                         "lap": self.total_laps, "event_type": "penalty",
-                        "description": f"{entry['driver_name']} receives {penalty}s penalty for insufficient pit stops ({entry['pit_stops']}/{MIN_PIT_STOPS})"
+                        "description": f"{entry['driver_name']} receives {penalty}s penalty for not using 2 different compounds (used: {', '.join(used) or 'none'})"
                     })
 
         active = [e for e in self.race_entries if not e["dnf"]]

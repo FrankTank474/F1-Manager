@@ -2855,6 +2855,119 @@
     border-left: 4px solid var(--warning-color);
 }
 
+/* Fast Forward Menu */
+.ff-menu-content {
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.ff-menu-info {
+    text-align: center;
+    padding: var(--space-lg);
+}
+
+.ff-menu-info h3 {
+    margin-bottom: var(--space-sm);
+}
+
+.ff-menu-status {
+    padding: var(--space-lg);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-lg);
+    text-align: center;
+}
+
+.ff-menu-status.mismatch {
+    background: rgba(231, 76, 60, 0.1);
+    border: 1px solid var(--danger-color);
+}
+
+.ff-menu-status.waiting {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+}
+
+.ff-menu-status.opponent-waiting {
+    background: rgba(241, 196, 15, 0.1);
+    border: 1px solid var(--warning-color);
+}
+
+.ff-menu-status h4 {
+    margin-bottom: var(--space-md);
+}
+
+.ff-option-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-md);
+}
+
+.ff-option-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-xl);
+    border: 2px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--bg-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.ff-option-btn:hover:not(:disabled) {
+    border-color: var(--accent-color);
+    background: var(--bg-tertiary);
+    transform: translateY(-2px);
+}
+
+.ff-option-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.ff-option-btn.highlighted {
+    border-color: var(--warning-color);
+    background: rgba(241, 196, 15, 0.1);
+    animation: pulse-highlight 1.5s infinite;
+}
+
+.ff-option-btn.full-season {
+    grid-column: span 2;
+    background: linear-gradient(135deg, var(--bg-secondary), var(--bg-tertiary));
+}
+
+.ff-option-num {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: var(--accent-color);
+    line-height: 1;
+}
+
+.ff-option-label {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    margin-top: var(--space-xs);
+}
+
+.ff-option-note {
+    font-size: var(--font-xs);
+    color: var(--text-muted);
+    margin-top: var(--space-sm);
+}
+
+.ff-menu-warning {
+    background: var(--bg-tertiary);
+    padding: var(--space-md);
+    border-left: 4px solid var(--warning-color);
+}
+
+.ff-menu-warning p {
+    margin: 0;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+}
+
 /* Wet tire styles */
 .tire-btn.tire-intermediate {
     background: linear-gradient(135deg, #27ae60, #2ecc71);

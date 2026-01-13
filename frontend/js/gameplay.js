@@ -100,8 +100,11 @@ function attachGameControlListeners(container, state) {
 
 /**
  * Start auto-refresh for multiplayer waiting states
+ * @param {string} gameId - Game ID
+ * @param {HTMLElement} container - Container element
+ * @param {Function} customRenderFn - Optional custom render function for special screens
  */
-function startRefreshInterval(gameId, container) {
+function startRefreshInterval(gameId, container, customRenderFn = null) {
     stopRefreshInterval();
     refreshInterval = setInterval(async () => {
         try {
@@ -115,15 +118,28 @@ function startRefreshInterval(gameId, container) {
                 return;
             }
 
+            // Check for fast forward status changes (for fast forward menu)
+            const ffStatusChanged = JSON.stringify(state.fast_forward_status) !==
+                                   JSON.stringify(currentGameState?.fast_forward_status);
+
             if (state.phase !== currentGameState?.phase ||
                 JSON.stringify(state.players) !== JSON.stringify(currentGameState?.players) ||
-                state.turn_info?.current_player_id !== currentGameState?.turn_info?.current_player_id) {
-                renderGameScreen(container, state);
+                state.turn_info?.current_player_id !== currentGameState?.turn_info?.current_player_id ||
+                ffStatusChanged) {
+
+                currentGameState = state;
+
+                // Use custom render function if provided, otherwise default
+                if (customRenderFn) {
+                    customRenderFn(container, state);
+                } else {
+                    renderGameScreen(container, state);
+                }
             }
         } catch (error) {
             console.error('Refresh failed:', error);
         }
-    }, 3000);
+    }, 2000);  // Faster refresh for better responsiveness
 }
 
 function stopRefreshInterval() {
@@ -981,6 +997,7 @@ function renderMultiplayerFastForwardSection(state) {
  * Fast Forward Menu Screen
  */
 function renderFastForwardMenu(container, state) {
+    stopRefreshInterval();  // Stop any existing refresh
     const isMultiplayer = state.is_multiplayer;
     const racesRemaining = state.total_races - state.current_race + 1;
     const ffStatus = state.fast_forward_status || { ready_players: {}, all_ready: false };
@@ -1005,7 +1022,7 @@ function renderFastForwardMenu(container, state) {
                     <h4>Selection Mismatch</h4>
                     <p>You selected: <strong>${getRacesLabel(myRequest)}</strong></p>
                     <p>${escapeHtml(otherPlayer?.username || 'Opponent')} selected: <strong>${getRacesLabel(otherRequest)}</strong></p>
-                    <p class="text-secondary mt-sm">Both players must select the same option.</p>
+                    <p class="text-secondary mt-sm">Both players must select the same option to proceed.</p>
                     <button class="btn btn-secondary mt-md" id="ff-cancel-btn">Change Selection</button>
                 </div>
             `;
@@ -1016,7 +1033,7 @@ function renderFastForwardMenu(container, state) {
                     <p>You selected: <strong>${getRacesLabel(myRequest)}</strong></p>
                     <div class="waiting-opponent mt-md">
                         <div class="spinner-small"></div>
-                        <span>Waiting for ${escapeHtml(otherPlayer?.username || 'opponent')}...</span>
+                        <span>Waiting for ${escapeHtml(otherPlayer?.username || 'opponent')} to select...</span>
                     </div>
                     <button class="btn btn-secondary mt-md" id="ff-cancel-btn">Cancel</button>
                 </div>
@@ -1026,7 +1043,7 @@ function renderFastForwardMenu(container, state) {
                 <div class="ff-menu-status opponent-waiting">
                     <h4>${escapeHtml(otherPlayer?.username || 'Opponent')} Wants to Fast Forward</h4>
                     <p>They selected: <strong class="text-warning">${getRacesLabel(otherRequest)}</strong></p>
-                    <p class="text-secondary">Select the same option to agree and start the simulation.</p>
+                    <p class="text-secondary">Click the same option to agree and start simulation!</p>
                 </div>
             `;
         }
@@ -1035,48 +1052,62 @@ function renderFastForwardMenu(container, state) {
     container.innerHTML = `
         <div class="game-container">
             <div class="game-header">
-                <button class="btn btn-ghost back-btn" id="ff-back-btn">Back</button>
-                <h1>Fast Forward</h1>
-                <p class="text-secondary">Quick simulate races with AI controlling ${isMultiplayer ? 'both teams' : 'your team'}</p>
+                <button class="btn btn-secondary back-btn" id="ff-back-btn">Back to Hub</button>
+                <h1>Fast Forward Season</h1>
             </div>
 
-            <div class="game-content ff-menu-content">
-                <div class="ff-menu-info card mb-lg">
-                    <h3>Season Progress</h3>
-                    <p>Race ${state.current_race} of ${state.total_races}</p>
-                    <p class="text-secondary">${racesRemaining} race${racesRemaining !== 1 ? 's' : ''} remaining</p>
-                </div>
+            <div class="game-content">
+                <div class="ff-menu-layout">
+                    <div class="ff-menu-sidebar">
+                        <div class="ff-season-card card">
+                            <h3>Season ${state.current_season}</h3>
+                            <div class="ff-progress-bar">
+                                <div class="ff-progress-fill" style="width: ${((state.current_race - 1) / state.total_races) * 100}%"></div>
+                            </div>
+                            <p class="ff-progress-text">Race ${state.current_race} of ${state.total_races}</p>
+                            <p class="text-secondary">${racesRemaining} race${racesRemaining !== 1 ? 's' : ''} remaining</p>
+                        </div>
 
-                ${multiplayerStatus}
-
-                <div class="ff-menu-options">
-                    <h3 class="mb-md">Select Simulation Length</h3>
-                    <div class="ff-option-grid">
-                        <button class="ff-option-btn ${otherRequest === 3 ? 'highlighted' : ''}" data-races="3" ${racesRemaining < 3 ? 'disabled' : ''}>
-                            <span class="ff-option-num">3</span>
-                            <span class="ff-option-label">Races</span>
-                            ${racesRemaining < 3 ? '<span class="ff-option-note">Not enough races</span>' : ''}
-                        </button>
-                        <button class="ff-option-btn ${otherRequest === 5 ? 'highlighted' : ''}" data-races="5" ${racesRemaining < 5 ? 'disabled' : ''}>
-                            <span class="ff-option-num">5</span>
-                            <span class="ff-option-label">Races</span>
-                            ${racesRemaining < 5 ? '<span class="ff-option-note">Not enough races</span>' : ''}
-                        </button>
-                        <button class="ff-option-btn ${otherRequest === 10 ? 'highlighted' : ''}" data-races="10" ${racesRemaining < 10 ? 'disabled' : ''}>
-                            <span class="ff-option-num">10</span>
-                            <span class="ff-option-label">Races</span>
-                            ${racesRemaining < 10 ? '<span class="ff-option-note">Not enough races</span>' : ''}
-                        </button>
-                        <button class="ff-option-btn full-season ${otherRequest === -1 ? 'highlighted' : ''}" data-races="-1">
-                            <span class="ff-option-num">${racesRemaining}</span>
-                            <span class="ff-option-label">Full Season</span>
-                        </button>
+                        <div class="ff-info-card card">
+                            <h4>How it works</h4>
+                            <ul class="ff-info-list">
+                                <li>AI controls pit strategy for all teams</li>
+                                <li>You earn prize money and points normally</li>
+                                <li>Results shown after simulation</li>
+                                ${isMultiplayer ? '<li>Both players must select same option</li>' : ''}
+                            </ul>
+                        </div>
                     </div>
-                </div>
 
-                <div class="ff-menu-warning card mt-lg">
-                    <p><strong>Note:</strong> During fast forward, AI will control all pit strategy decisions.
-                    You will receive prize money and points as normal.</p>
+                    <div class="ff-menu-main">
+                        ${multiplayerStatus}
+
+                        <div class="ff-menu-options">
+                            <h3>Select Races to Simulate</h3>
+                            <div class="ff-option-grid">
+                                <button class="ff-option-btn ${otherRequest === 3 ? 'highlighted' : ''} ${imWaiting ? 'disabled-look' : ''}" data-races="3" ${racesRemaining < 3 || imWaiting ? 'disabled' : ''}>
+                                    <span class="ff-option-num">3</span>
+                                    <span class="ff-option-label">Races</span>
+                                    ${racesRemaining < 3 ? '<span class="ff-option-note">Not enough races</span>' : ''}
+                                </button>
+                                <button class="ff-option-btn ${otherRequest === 5 ? 'highlighted' : ''} ${imWaiting ? 'disabled-look' : ''}" data-races="5" ${racesRemaining < 5 || imWaiting ? 'disabled' : ''}>
+                                    <span class="ff-option-num">5</span>
+                                    <span class="ff-option-label">Races</span>
+                                    ${racesRemaining < 5 ? '<span class="ff-option-note">Not enough races</span>' : ''}
+                                </button>
+                                <button class="ff-option-btn ${otherRequest === 10 ? 'highlighted' : ''} ${imWaiting ? 'disabled-look' : ''}" data-races="10" ${racesRemaining < 10 || imWaiting ? 'disabled' : ''}>
+                                    <span class="ff-option-num">10</span>
+                                    <span class="ff-option-label">Races</span>
+                                    ${racesRemaining < 10 ? '<span class="ff-option-note">Not enough races</span>' : ''}
+                                </button>
+                                <button class="ff-option-btn full-season ${otherRequest === -1 ? 'highlighted' : ''} ${imWaiting ? 'disabled-look' : ''}" data-races="-1" ${imWaiting ? 'disabled' : ''}>
+                                    <span class="ff-option-num">${racesRemaining}</span>
+                                    <span class="ff-option-label">Full Season</span>
+                                    <span class="ff-option-note">Complete remaining races</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1084,6 +1115,7 @@ function renderFastForwardMenu(container, state) {
 
     // Event listeners
     document.getElementById('ff-back-btn')?.addEventListener('click', () => {
+        stopRefreshInterval();
         renderGameScreen(container, state);
     });
 
@@ -1094,15 +1126,13 @@ function renderFastForwardMenu(container, state) {
             const response = await api.post(`/gameplay/${state.game_id}/cancel-fast-forward`);
             renderFastForwardMenu(container, response.state);
         } catch (error) {
-            showAlert(container.querySelector('.ff-menu-content'), error.message, 'error');
+            showAlert(container.querySelector('.ff-menu-main'), error.message, 'error');
             setButtonLoading(btn, false);
         }
     });
 
     // Fast forward option buttons
-    document.querySelectorAll('.ff-option-btn').forEach(btn => {
-        if (btn.disabled) return;
-
+    document.querySelectorAll('.ff-option-btn:not([disabled])').forEach(btn => {
         btn.addEventListener('click', async () => {
             const numRaces = parseInt(btn.dataset.races);
 
@@ -1112,12 +1142,14 @@ function renderFastForwardMenu(container, state) {
                 try {
                     const response = await api.post(`/gameplay/${state.game_id}/multiplayer-fast-forward?num_races=${numRaces}`);
                     if (response.executed) {
+                        stopRefreshInterval();
                         renderFastForwardResults(container, response.state, response.fast_forward_results);
                     } else {
                         renderFastForwardMenu(container, response.state);
                     }
                 } catch (error) {
-                    showAlert(container.querySelector('.ff-menu-content'), error.message, 'error');
+                    console.error('Fast forward error:', error);
+                    showAlert(container.querySelector('.ff-menu-main'), error.message || 'Fast forward request failed', 'error');
                     setButtonLoading(btn, false);
                 }
             } else {
@@ -1131,16 +1163,17 @@ function renderFastForwardMenu(container, state) {
                     const response = await api.post(`/gameplay/${state.game_id}/fast-forward?num_races=${numRaces}`);
                     renderFastForwardResults(container, response.state, response.fast_forward_results);
                 } catch (error) {
-                    showAlert(container.querySelector('.ff-menu-content'), error.message, 'error');
+                    console.error('Fast forward error:', error);
+                    showAlert(container.querySelector('.ff-menu-main'), error.message || 'Fast forward failed', 'error');
                     setButtonLoading(btn, false);
                 }
             }
         });
     });
 
-    // Auto-refresh in multiplayer when waiting
-    if (isMultiplayer && imWaiting) {
-        startRefreshInterval(state.game_id, container, () => renderFastForwardMenu(container, state));
+    // Auto-refresh in multiplayer when waiting for opponent
+    if (isMultiplayer && (imWaiting || otherWaiting)) {
+        startRefreshInterval(state.game_id, container, renderFastForwardMenu);
     }
 }
 

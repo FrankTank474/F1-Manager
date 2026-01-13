@@ -3445,9 +3445,16 @@ class MultiplayerGameState:
 
         # Both players agreed - execute fast forward
         self.fast_forward_ready = {}  # Clear ready state
-        result = self.fast_forward_races(player_id, num_races)
-        result["executed"] = True
-        return result
+        try:
+            result = self.fast_forward_races(player_id, num_races)
+            if not result.get("success"):
+                return {"success": False, "error": result.get("error", "Fast forward simulation failed")}
+            result["executed"] = True
+            return result
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return {"success": False, "error": f"Fast forward error: {str(e)}"}
 
     def cancel_fast_forward_request(self, player_id: str) -> bool:
         """Cancel a fast forward request."""

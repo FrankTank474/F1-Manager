@@ -3596,8 +3596,8 @@ class MultiplayerGameState:
         while self.current_lap < self.total_laps:
             self._simulate_lap_internal()
 
-        # Process results
-        self._process_race_results()
+        # Process results (use _finish_race but don't change phase permanently)
+        self._finish_race()
 
         # Get player results
         player_results = []
